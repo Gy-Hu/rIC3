@@ -45,6 +45,9 @@ pub struct Statistic {
     pub overall_mic_time: Duration,
     pub overall_block_time: Duration,
     pub overall_propagate_time: Duration,
+
+    pub bucket_sum: f64,
+    pub bucket_num: usize,
 }
 
 impl Statistic {
@@ -63,9 +66,13 @@ impl Statistic {
 }
 
 impl Ic3 {
-    pub fn statistic(&self) {
+    pub fn statistic(&mut self) {
         self.obligations.statistic();
         self.frames.statistic();
+        for solver in self.solvers.iter() {
+            self.statistic.bucket_num += solver.solver.get_bucket_num();
+            self.statistic.bucket_sum += solver.solver.get_bucket_sum();
+        }
         println!("{:#?}", self.statistic);
     }
 }

@@ -1,5 +1,9 @@
 use super::Frames;
-use crate::{model::Model, Ic3};
+use crate::{
+    model::Model,
+    statistic::{self, Statistic},
+    Ic3,
+};
 use logic_form::{Clause, Cube, Lit};
 use satif::{SatResult, Satif, SatifSat, SatifUnsat};
 use std::{mem::take, ops::Deref, time::Instant};
@@ -9,7 +13,7 @@ type Sat = minisat::Sat;
 type Unsat = minisat::Unsat;
 
 pub struct Ic3Solver {
-    solver: Box<SatSolver>,
+    pub solver: Box<SatSolver>,
     num_act: usize,
     frame: usize,
     temporary: Vec<Cube>,
@@ -29,7 +33,9 @@ impl Ic3Solver {
         }
     }
 
-    pub fn reset(&mut self, model: &Model, frames: &Frames) {
+    pub fn reset(&mut self, statistic: &mut Statistic, model: &Model, frames: &Frames) {
+        statistic.bucket_num += self.solver.get_bucket_num();
+        statistic.bucket_sum += self.solver.get_bucket_sum();
         let temporary = take(&mut self.temporary);
         *self = Self::new(model, self.frame);
         for t in temporary {
@@ -125,7 +131,7 @@ impl Ic3 {
         solver.num_act += 1;
         if solver.num_act > 1000 {
             self.statistic.num_solver_restart += 1;
-            solver.reset(&self.model, &self.frames);
+            solver.reset(&mut self.statistic, &self.model, &self.frames);
         }
         self.blocked_inner(frame, cube, strengthen)
     }
