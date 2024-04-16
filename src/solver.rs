@@ -4,9 +4,9 @@ use logic_form::{Clause, Cube, Lit};
 use satif::{SatResult, Satif, SatifSat, SatifUnsat};
 use std::{mem::take, ops::Deref, time::Instant};
 
-pub type SatSolver = cryptominisat::Solver;
-type Sat = cryptominisat::Sat;
-type Unsat = cryptominisat::Unsat;
+pub type SatSolver = cadical::Solver;
+type Sat = cadical::Sat;
+type Unsat = cadical::Unsat;
 
 pub struct Ic3Solver {
     solver: Box<SatSolver>,
