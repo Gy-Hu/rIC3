@@ -67,12 +67,34 @@ impl Ic3Solver {
 }
 
 impl Ic3 {
+    fn get_coi(&mut self, cube: &Cube) -> u32 {
+        self.varset.clear();
+        for r in cube.iter() {
+            self.varset.insert(r.var());
+        }
+        let mut now = 0;
+        while now < self.varset.len() {
+            let v = self.varset[now];
+            now += 1;
+            let v: usize = v.into();
+            if self.aig.nodes[v].is_and() {
+                let fanin0 = self.aig.nodes[v].fanin0().to_lit().var();
+                let fanin1 = self.aig.nodes[v].fanin1().to_lit().var();
+                self.varset.insert(fanin0);
+                self.varset.insert(fanin1);
+            }
+        }
+        self.varset.len()
+    }
+
     fn blocked_inner(&mut self, frame: usize, cube: &Cube, strengthen: bool) -> BlockResult {
         self.statistic.num_sat_inductive += 1;
         let solver_idx = frame - 1;
-        let solver = &mut self.solvers[solver_idx].solver;
         let start = Instant::now();
         let mut assumption = self.model.cube_next(cube);
+        let coi = self.get_coi(&assumption) as f64 / self.aig.nodes.len() as f64;
+        self.statistic.coi += coi;
+        let solver = &mut self.solvers[solver_idx].solver;
         let sat_start = Instant::now();
         let res = if strengthen {
             let act = solver.new_var().into();

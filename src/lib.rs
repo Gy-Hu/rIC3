@@ -16,7 +16,7 @@ use activity::Activity;
 use aig::Aig;
 pub use command::Args;
 use frames::Frames;
-use logic_form::{Cube, Lemma};
+use logic_form::{Cube, Lemma, Var, VarSet};
 use model::Model;
 use solver::{BlockResult, BlockResultYes, Ic3Solver, Lift};
 use std::panic::{self, AssertUnwindSafe};
@@ -25,6 +25,8 @@ use std::time::Instant;
 
 pub struct Ic3 {
     args: Args,
+    aig: Aig,
+    varset: VarSet,
     model: Model,
     solvers: Vec<Ic3Solver>,
     frames: Frames,
@@ -148,15 +150,19 @@ impl Ic3 {
         let lift = Lift::new(&model);
         let statistic = Statistic::new(args.model.as_ref().unwrap(), &model);
         let activity = Activity::new(&model.latchs);
+        let mut varset = VarSet::new();
+        varset.reserve(Var::new(aig.nodes.len()));
         let mut res = Self {
             args,
             model,
+            aig,
             solvers: Vec::new(),
             frames: Frames::new(),
             activity,
             lift,
             statistic,
             obligations: ProofObligationQueue::new(),
+            varset,
         };
         res.new_frame();
         for cube in res.model.inits() {
