@@ -71,6 +71,16 @@ pub enum Engine {
     Portfolio,
 }
 
+#[derive(Copy, Clone, ValueEnum, Debug, serde::Serialize, serde::Deserialize)]
+#[clap(rename_all = "lower")]
+pub enum AbcPreMode {
+    None,
+    Mode1,
+    Mode2,
+    Mode3,
+    Mode4,
+}
+
 #[derive(Args, Clone, Debug)]
 pub struct IC3Options {
     /// dynamic generalization
@@ -131,6 +141,9 @@ pub struct PreprocessOptions {
     /// disable abc preprocess
     #[arg(long = "no-abc", default_value_t = false)]
     pub no_abc: bool,
+
+    #[arg(long = "abc-pre-mode", value_enum, default_value_t = AbcPreMode::Mode1)]
+    pub abc_pre_mode: AbcPreMode,
 }
 
 impl Default for Options {

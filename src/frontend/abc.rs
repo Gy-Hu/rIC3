@@ -1,8 +1,15 @@
 use abc_rs::Abc;
 use aig::Aig;
 use std::{env, mem::take, time::Duration};
+use crate::options::Options;
+use crate::options::AbcPreMode;
+use serde_json; // 添加 serde_json 依赖
 
-fn preprocess(f: String) {
+fn preprocess((f, mode_json): (String, String)) {
+    // 反序列化 mode_json 为 AbcPreMode
+    let mode: AbcPreMode = serde_json::from_str(&mode_json).expect("Failed to deserialize AbcPreMode");
+    println!("debug: mode = {:?}", mode);
+
     let mut aig = Aig::from_file(&f);
     let num_input = aig.inputs.len();
     let num_latchs = aig.latchs.len();
@@ -22,7 +29,30 @@ fn preprocess(f: String) {
     let mut abc = Abc::new();
     abc.read_aig(&aig);
     drop(aig);
-    abc.execute_command("&get; &fraig -y; &put; orchestrate;");
+
+    match mode {
+        AbcPreMode::Mode1 => {
+            println!("Preprocessing with Mode1: strash, scleanup, drw");
+            abc.execute_command("strash; scleanup -m; drw;");
+        }
+        AbcPreMode::Mode2 => {
+            println!("Preprocessing with Mode2: &get -n; &gla -T 500 -F 200 -v; &gla_derive; &put; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; scorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v; lcorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v;");
+            abc.execute_command("&get -n; &gla -T 500 -F 200 -v; &gla_derive; &put; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; scorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v; lcorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v;");
+        }
+        AbcPreMode::Mode3 => {
+            println!("Preprocessing with Mode3: &get -n; &gla -T 30 -F 20 -v; &gla_derive; &put; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; scorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v; lcorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v;");
+            abc.execute_command("&get -n; &gla -T 30 -F 20 -v; &gla_derive; &put; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; scorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v; lcorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v;");
+        }
+        AbcPreMode::Mode4 => {
+            println!("Preprocessing with Mode4: &get -n; &gla -T 100 -F 50 -v; &gla_derive; &put; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; dc2 -v; scorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v; lcorr; dc2 -v; dc2 -v; dc2 -v; dc2 -v;");
+            abc.execute_command("strash; balance; drw; drf; balance; drf;");
+        }
+        _ => {
+            println!("Preprocessing with default mode: &get; &fraig -y; &put; orchestrate;");
+            abc.execute_command("&get; &fraig -y; &put; orchestrate;");
+        }
+    }
+
     let mut abc_aig = abc.write_aig();
     for (i, li) in latchs.iter().enumerate() {
         let mut l = *li;
@@ -46,7 +76,7 @@ fn preprocess(f: String) {
 }
 
 #[allow(unused)]
-pub fn abc_preprocess(mut aig: Aig) -> Aig {
+pub fn abc_preprocess(mut aig: Aig, options: &Options) -> Aig {
     let dir = match env::var("RIC3_TMP_DIR") {
         Ok(d) => d,
         Err(_) => "/tmp/rIC3".to_string(),
@@ -54,7 +84,13 @@ pub fn abc_preprocess(mut aig: Aig) -> Aig {
     let tmpfile = tempfile::NamedTempFile::new_in(dir).unwrap();
     let path = tmpfile.path().as_os_str().to_str().unwrap();
     aig.to_file(path, false);
-    let mut join = procspawn::spawn(path.to_string(), preprocess);
+
+    // 序列化 AbcPreMode 为 JSON 字符串
+    let mode_json = serde_json::to_string(&options.preprocess.abc_pre_mode)
+        .expect("Failed to serialize AbcPreMode");
+
+    let mut join = procspawn::spawn((path.to_string(), mode_json), preprocess);
+
     if join.join_timeout(Duration::from_secs(5)).is_ok() {
         aig = Aig::from_file(path);
     } else {
@@ -62,5 +98,6 @@ pub fn abc_preprocess(mut aig: Aig) -> Aig {
         let _ = join.kill();
     }
     drop(tmpfile);
+
     aig
 }

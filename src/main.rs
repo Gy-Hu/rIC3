@@ -24,6 +24,7 @@ fn main() {
     procspawn::init();
     fs::create_dir_all("/tmp/rIC3").unwrap();
     let mut options = Options::parse();
+    println!("debug: abc-pre-mode = {:?}", options.preprocess.abc_pre_mode);
     if options.verbose > 0 {
         println!("the model to be checked: {}", options.model);
     }

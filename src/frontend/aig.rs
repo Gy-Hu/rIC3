@@ -17,7 +17,7 @@ pub fn aig_preprocess(aig: &Aig, options: &options::Options) -> (Aig, HashMap<us
             remap_retain.insert(l.input);
         }
         remap.retain(|x, _| remap_retain.contains(x));
-        aig = abc_preprocess(aig);
+        aig = abc_preprocess(aig, options);
         let remap2;
         (aig, remap2) = aig.coi_refine();
         remap = {
