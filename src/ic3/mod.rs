@@ -201,15 +201,38 @@ impl IC3 {
                     return None;
                 }
             } else {
-                let (model, inputs) = self.get_pred(po.frame, true);
-                self.add_obligation(ProofObligation::new(
-                    po.frame - 1,
-                    Lemma::new(model),
-                    inputs,
-                    po.depth + 1,
-                    Some(po.clone()),
-                ));
-                self.add_obligation(po);
+                // Generate multiple predecessors if configured
+                let num_samples = self.options.ic3.pred_samples;
+                if num_samples > 1 {
+                    let preds = self.get_multiple_preds(po.frame, true, num_samples);
+                    if !preds.is_empty() {
+                        // Add the original proof obligation back to the queue
+                        self.add_obligation(po.clone());
+                        
+                        // Add all the sampled predecessors as new proof obligations
+                        for (i, (model, inputs)) in preds.into_iter().enumerate() {
+                            let next = if i == 0 { Some(po.clone()) } else { None };
+                            self.add_obligation(ProofObligation::new(
+                                po.frame - 1,
+                                Lemma::new(model),
+                                inputs,
+                                po.depth + 1,
+                                next,
+                            ));
+                        }
+                    }
+                } else {
+                    // Original behavior for single predecessor
+                    let (model, inputs) = self.get_pred(po.frame, true);
+                    self.add_obligation(ProofObligation::new(
+                        po.frame - 1,
+                        Lemma::new(model),
+                        inputs,
+                        po.depth + 1,
+                        Some(po.clone()),
+                    ));
+                    self.add_obligation(po);
+                }
             }
         }
         Some(true)
@@ -520,6 +543,18 @@ impl Engine for IC3 {
             statistic += s.statistic;
         }
         println!("{:#?}", statistic);
+        
+        // Add multi-predecessor sampling statistics
+        if self.options.ic3.pred_samples > 1 {
+            println!("Predecessor sampling statistics:");
+            println!("  Total samples attempted: {}", self.statistic.total_pred_samples);
+            println!("  Successful samples: {}", self.statistic.successful_pred_samples);
+            if self.statistic.total_pred_samples > 0 {
+                println!("  Success rate: {:.2}%", 
+                    (self.statistic.successful_pred_samples as f64 / self.statistic.total_pred_samples as f64) * 100.0);
+            }
+        }
+        
         println!("{:#?}", self.statistic);
     }
 }

@@ -113,6 +113,15 @@ pub struct IC3Options {
     /// ic3 reverse sort order
     #[arg(long = "ic3-reverse-sort", default_value_t = false)]
     pub reverse_sort: bool,
+
+    /// Number of predecessors to sample for each proof obligation
+    #[arg(long = "ic3-pred-samples", default_value_t = 1)]
+    pub pred_samples: usize,
+
+    // variable ordering in inductive generalization with hybrid sorting
+    // topo first, then activity, decay by frame number
+
+    // 
 }
 
 #[derive(Args, Clone, Debug)]

@@ -29,6 +29,10 @@ pub struct Statistic {
     pub num_auxiliary_var: usize,
 
     pub test: SuccessRate,
+    
+    // Statistics for multiple predecessor sampling
+    pub total_pred_samples: usize,
+    pub successful_pred_samples: usize,
 }
 
 impl Statistic {

@@ -4,3 +4,12 @@ perf.data
 perf.data.old
 flamegraph.svg
 certifaiger.aig
+tmp.aig
+tmp.aag
+GMT20250321-060835_Recording.transcript.vtt
+abc.history
+6s0.aig
+6s0.aag
+6s0_opt.aig
+6s0_opt_GIA.aig
+.DS_Store
