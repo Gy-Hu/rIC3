@@ -120,7 +120,7 @@ impl Solver {
         assert!(self.highest_level() == 0);
         let mut clause = logic_form::LitVec::new();
         for l in cls.iter() {
-            assert!(self.num_var() + 1 > l.var().into());
+            assert!(self.num_var() + 1 > Into::<usize>::into(l.var()));
             match self.value.v(*l) {
                 Lbool::TRUE => return None,
                 Lbool::FALSE => (),

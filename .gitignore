@@ -13,3 +13,4 @@ abc.history
 6s0_opt.aig
 6s0_opt_GIA.aig
 .DS_Store
+deps/abc-rs/

@@ -202,7 +202,7 @@ impl IC3 {
             
             // Use different ordering strategies based on the sample index
             // to increase the diversity of the generated models
-            let mut order: Vec<Box<dyn FnMut(&mut LitVec)>> = Vec::new();
+            let mut order: Vec<Box<dyn FnMut(&mut LitVec)>>;
             
             // Add standard orderings
             let inn: Box<dyn FnMut(&mut LitVec)> = Box::new(|cube: &mut LitVec| {

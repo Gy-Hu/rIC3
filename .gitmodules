@@ -1,21 +1,28 @@
 [submodule "deps/aig-rs"]
 	path = deps/aig-rs
 	url = https://github.com/gipsyh/aig-rs.git
+	branch = 369d115bb24386b486cb0b26a903bed81928b2d7
 [submodule "deps/logic-form"]
 	path = deps/logic-form
 	url = https://github.com/gipsyh/logic-form.git
+	branch = ddf4c4e37df0762511f88982a238c436ba2092fd
 [submodule "deps/giputils"]
 	path = deps/giputils
 	url = https://github.com/gipsyh/giputils.git
+	branch = cf32aaa52a5509291a383cf8f7d2d37c7e9ed6bf
 [submodule "deps/satif"]
 	path = deps/satif
 	url = https://github.com/gipsyh/satif.git
+	branch = 14a471ff8ef6a6510f54f89dfc1dd5cb0f9a27fd
 [submodule "deps/abc-rs"]
 	path = deps/abc-rs
 	url = https://github.com/gipsyh/abc-rs.git
+	branch = d39c44d386ab40082fbb912ec2eead827a736c12
 [submodule "deps/cadical-rs"]
 	path = deps/cadical-rs
 	url = https://github.com/gipsyh/cadical-rs.git
+	branch = af74b8eac4e329eeb0ddd81e4f20f3c3e4551c44
 [submodule "deps/kissat-rs"]
 	path = deps/kissat-rs
 	url = https://github.com/gipsyh/kissat-rs.git
+	branch = d35199087417d567927f2ee54e35d4d20dba9b8e
