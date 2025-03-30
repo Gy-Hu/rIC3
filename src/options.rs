@@ -122,8 +122,10 @@ pub struct IC3Options {
     #[arg(long = "ic3-multi-clauses", default_value_t = 1)]
     pub multi_clauses: usize,
 
-    // variable ordering in inductive generalization with hybrid sorting
-    // topo first, then activity, decay by frame number
+    /// Enable hybrid variable ordering in inductive generalization
+    /// (combines topological and activity-based ordering with frame decay)
+    #[arg(long = "ic3-hybrid-sort", default_value_t = false)]
+    pub hybrid_sort: bool,
 
     // using flip-flop flip rate to order variables
 }

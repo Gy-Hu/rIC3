@@ -4,7 +4,6 @@ use giputils::hash::GHashSet;
 use logic_form::{Lemma, Lit, LitVec};
 use satif::Satif;
 use std::time::Instant;
-use rand::Rng;
 use rand::RngCore;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -226,8 +225,10 @@ impl IC3 {
         }
         self.statistic.avg_mic_cube_len += cube.len();
         self.statistic.num_mic += 1;
-        let mut cex = Vec::new();
-        if self.options.ic3.topo_sort {
+        if self.options.ic3.hybrid_sort {
+            // Use hybrid sorting that combines topology and activity with frame decay
+            self.activity.sort_hybrid(&mut cube, frame, self.options.ic3.reverse_sort);
+        } else if self.options.ic3.topo_sort {
             cube.sort();
             if self.options.ic3.reverse_sort {
                 cube.reverse();
@@ -246,7 +247,7 @@ impl IC3 {
             let mut removed_cube = cube.clone();
             removed_cube.remove(i);
             let mic = if parameter.level == 0 {
-                self.down(frame, &removed_cube, &keep, &cube, constraint, &mut cex)
+                self.down(frame, &removed_cube, &keep, &cube, constraint, &mut Vec::new())
             } else {
                 self.ctg_down(frame, &removed_cube, &keep, &cube, parameter)
             };
@@ -306,9 +307,15 @@ impl IC3 {
             
             variants.push((cube.clone(), !self.options.ic3.topo_sort, !self.options.ic3.reverse_sort));
             
+            // Add a hybrid sorting variant if enabled
+            if self.options.ic3.hybrid_sort && num_clauses > 4 {
+                // Add a variant with hybrid sorting
+                variants.push((cube.clone(), false, false));
+            }
+            
             if num_clauses > 4 {
-                for _ in 0..(num_clauses - 4).min(3) {
-                    let mut randomized_cube = cube.clone();
+                for _ in 0..(num_clauses - 4 - (self.options.ic3.hybrid_sort as usize)).min(3) {
+                    let randomized_cube = cube.clone();
                     let mut indices: Vec<usize> = (0..randomized_cube.len()).collect();
                     for i in 0..indices.len() {
                         let j = self.rng.next_u32() as usize % indices.len();
@@ -338,9 +345,49 @@ impl IC3 {
             
             let original_topo_sort = self.options.ic3.topo_sort;
             let original_reverse_sort = self.options.ic3.reverse_sort;
+            let original_hybrid_sort = self.options.ic3.hybrid_sort;
+            
+            // Check if this is a special hybrid variant (we stored them as (cube, false, false))
+            let is_hybrid_variant = !topo_sort && !reverse_sort && variant_cube.len() == cube.len();
+            
+            if is_hybrid_variant && self.options.ic3.hybrid_sort {
+                // This is a hybrid variant with custom weights
+                // We need to apply the hybrid sort directly here
+                
+                // Apply hybrid sorting directly to this variant
+                let mut sorted_cube = variant_cube.clone();
+                self.activity.sort_hybrid(&mut sorted_cube, frame, self.options.ic3.reverse_sort);
+                
+                if domain_needs_handling {
+                    self.solvers[frame - 1].set_domain(
+                        self.ts
+                            .lits_next(&sorted_cube)
+                            .iter()
+                            .copied()
+                            .chain(sorted_cube.iter().copied()),
+                    );
+                }
+                
+                let result_cube = self.mic_by_drop_var(frame, sorted_cube, constraint, parameter, false);
+                
+                if !clauses.contains(&result_cube) {
+                    clauses.push(result_cube);
+                    self.statistic.unique_multi_clauses += 1;
+                }
+                
+                self.statistic.total_multi_clauses += 1;
+                
+                if domain_needs_handling {
+                    self.solvers[frame - 1].unset_domain();
+                }
+                
+                continue;
+            }
             
             self.options.ic3.topo_sort = topo_sort;
             self.options.ic3.reverse_sort = reverse_sort;
+            // Disable hybrid sort for standard variants
+            self.options.ic3.hybrid_sort = false;
             
             if domain_needs_handling {
                 self.solvers[frame - 1].set_domain(
@@ -356,13 +403,14 @@ impl IC3 {
             
             self.options.ic3.topo_sort = original_topo_sort;
             self.options.ic3.reverse_sort = original_reverse_sort;
-            
-            self.statistic.total_multi_clauses += 1;
+            self.options.ic3.hybrid_sort = original_hybrid_sort;
             
             if !clauses.contains(&result_cube) {
                 clauses.push(result_cube);
                 self.statistic.unique_multi_clauses += 1;
             }
+            
+            self.statistic.total_multi_clauses += 1;
             
             if domain_needs_handling {
                 self.solvers[frame - 1].unset_domain();
