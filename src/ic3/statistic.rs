@@ -33,6 +33,10 @@ pub struct Statistic {
     // Statistics for multiple predecessor sampling
     pub total_pred_samples: usize,
     pub successful_pred_samples: usize,
+    
+    // Statistics for multiple clauses generation
+    pub total_multi_clauses: usize,  // 生成的多子句总数
+    pub unique_multi_clauses: usize, // 生成的唯一子句数（不重复）
 }
 
 impl Statistic {

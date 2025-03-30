@@ -117,13 +117,15 @@ pub struct IC3Options {
     /// Number of predecessors to sample for each proof obligation
     #[arg(long = "ic3-pred-samples", default_value_t = 1)]
     pub pred_samples: usize,
+    
+    /// Number of different clauses to generate during inductive generalization
+    #[arg(long = "ic3-multi-clauses", default_value_t = 1)]
+    pub multi_clauses: usize,
 
     // variable ordering in inductive generalization with hybrid sorting
     // topo first, then activity, decay by frame number
-    
-    /// Number of clauses to generate during inductive generalization with different orderings
-    #[arg(long = "ic3-multi-clauses", default_value_t = 1)]
-    pub multi_clauses: usize,
+
+    // using flip-flop flip rate to order variables
 }
 
 #[derive(Args, Clone, Debug)]

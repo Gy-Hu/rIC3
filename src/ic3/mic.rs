@@ -4,6 +4,8 @@ use giputils::hash::GHashSet;
 use logic_form::{Lemma, Lit, LitVec};
 use satif::Satif;
 use std::time::Instant;
+use rand::Rng;
+use rand::RngCore;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DropVarParameter {
@@ -31,6 +33,7 @@ impl DropVarParameter {
 pub enum MicType {
     NoMic,
     DropVar(DropVarParameter),
+    MultiClauses(DropVarParameter, usize),
 }
 
 impl MicType {
@@ -44,7 +47,12 @@ impl MicType {
         } else {
             DropVarParameter::default()
         };
-        MicType::DropVar(p)
+        
+        if options.ic3.multi_clauses > 1 {
+            MicType::MultiClauses(p, options.ic3.multi_clauses)
+        } else {
+            MicType::DropVar(p)
+        }
     }
 }
 
@@ -204,10 +212,10 @@ impl IC3 {
         mut cube: LitVec,
         constraint: &[LitVec],
         parameter: DropVarParameter,
-        variant_id: Option<usize>,
+        manage_domain: bool,
     ) -> LitVec {
         let start = Instant::now();
-        if parameter.level == 0 {
+        if parameter.level == 0 && manage_domain {
             self.solvers[frame - 1].set_domain(
                 self.ts
                     .lits_next(&cube)
@@ -219,47 +227,15 @@ impl IC3 {
         self.statistic.avg_mic_cube_len += cube.len();
         self.statistic.num_mic += 1;
         let mut cex = Vec::new();
-        
-        // 根据variant_id决定使用哪种排序变体
-        let variant = variant_id.unwrap_or(0);
-        
-        if variant == 0 {
-            // 默认排序：使用当前选项
-            if self.options.ic3.topo_sort {
-                // Sort by topological order
-                cube.sort();
-                // Apply reverse if requested
-                if self.options.ic3.reverse_sort {
-                    cube.reverse();
-                }
-            } else {
-                // Sort by activity
-                let ascending = !self.options.ic3.reverse_sort;
-                self.activity.sort_by_activity(&mut cube, ascending);
+        if self.options.ic3.topo_sort {
+            cube.sort();
+            if self.options.ic3.reverse_sort {
+                cube.reverse();
             }
         } else {
-            // 变体排序
-            match variant % 4 {
-                1 => {
-                    // 变体1: 始终使用拓扑排序（升序）
-                    cube.sort();
-                },
-                2 => {
-                    // 变体2: 始终使用拓扑排序（降序）
-                    cube.sort();
-                    cube.reverse();
-                },
-                3 => {
-                    // 变体3: 按活跃度排序（升序）
-                    self.activity.sort_by_activity(&mut cube, true);
-                },
-                _ => {
-                    // 变体4: 按活跃度排序（降序）
-                    self.activity.sort_by_activity(&mut cube, false);
-                }
-            }
+            let ascending = !self.options.ic3.reverse_sort;
+            self.activity.sort_by_activity(&mut cube, ascending);
         }
-        
         let mut keep = GHashSet::new();
         let mut i = 0;
         while i < cube.len() {
@@ -277,7 +253,7 @@ impl IC3 {
             if let Some(new_cube) = mic {
                 self.statistic.mic_drop.success();
                 (cube, i) = self.handle_down_success(frame, cube, i, new_cube);
-                if parameter.level == 0 {
+                if parameter.level == 0 && manage_domain {
                     self.solvers[frame - 1].unset_domain();
                     self.solvers[frame - 1].set_domain(
                         self.ts
@@ -293,12 +269,108 @@ impl IC3 {
                 i += 1;
             }
         }
-        if parameter.level == 0 {
+        if parameter.level == 0 && manage_domain {
             self.solvers[frame - 1].unset_domain();
         }
         self.activity.bump_cube_activity(&cube);
         self.statistic.block_mic_time += start.elapsed();
         cube
+    }
+
+    pub fn mic_by_multi_clauses(
+        &mut self,
+        frame: usize,
+        cube: &LitVec,
+        constraint: &[LitVec],
+        parameter: DropVarParameter,
+        num_clauses: usize,
+    ) -> Vec<LitVec> {
+        let start = Instant::now();
+        
+        let domain_needs_handling = parameter.level == 0;
+        if domain_needs_handling {
+            self.solvers[frame - 1].unset_domain();
+        }
+        
+        self.statistic.avg_mic_cube_len += cube.len();
+        self.statistic.num_mic += 1;
+        
+        let mut variants = Vec::new();
+        
+        variants.push((cube.clone(), self.options.ic3.topo_sort, self.options.ic3.reverse_sort));
+        
+        if num_clauses > 1 && !self.options.ic3.inn {
+            variants.push((cube.clone(), self.options.ic3.topo_sort, !self.options.ic3.reverse_sort));
+            
+            variants.push((cube.clone(), !self.options.ic3.topo_sort, self.options.ic3.reverse_sort));
+            
+            variants.push((cube.clone(), !self.options.ic3.topo_sort, !self.options.ic3.reverse_sort));
+            
+            if num_clauses > 4 {
+                for _ in 0..(num_clauses - 4).min(3) {
+                    let mut randomized_cube = cube.clone();
+                    let mut indices: Vec<usize> = (0..randomized_cube.len()).collect();
+                    for i in 0..indices.len() {
+                        let j = self.rng.next_u32() as usize % indices.len();
+                        indices.swap(i, j);
+                    }
+                    
+                    let mut reordered_cube = LitVec::new();
+                    for &idx in &indices {
+                        if idx < randomized_cube.len() {
+                            reordered_cube.push(randomized_cube[idx]);
+                        }
+                    }
+                    
+                    let topo = self.rng.next_u32() % 2 == 0;
+                    let reverse = self.rng.next_u32() % 2 == 0;
+                    variants.push((reordered_cube, topo, reverse));
+                }
+            }
+        }
+        
+        let mut clauses = Vec::new();
+        
+        for (variant_cube, topo_sort, reverse_sort) in variants {
+            if clauses.len() >= num_clauses {
+                break;
+            }
+            
+            let original_topo_sort = self.options.ic3.topo_sort;
+            let original_reverse_sort = self.options.ic3.reverse_sort;
+            
+            self.options.ic3.topo_sort = topo_sort;
+            self.options.ic3.reverse_sort = reverse_sort;
+            
+            if domain_needs_handling {
+                self.solvers[frame - 1].set_domain(
+                    self.ts
+                        .lits_next(&variant_cube)
+                        .iter()
+                        .copied()
+                        .chain(variant_cube.iter().copied()),
+                );
+            }
+            
+            let result_cube = self.mic_by_drop_var(frame, variant_cube, constraint, parameter, false);
+            
+            self.options.ic3.topo_sort = original_topo_sort;
+            self.options.ic3.reverse_sort = original_reverse_sort;
+            
+            self.statistic.total_multi_clauses += 1;
+            
+            if !clauses.contains(&result_cube) {
+                clauses.push(result_cube);
+                self.statistic.unique_multi_clauses += 1;
+            }
+            
+            if domain_needs_handling {
+                self.solvers[frame - 1].unset_domain();
+            }
+        }
+        
+        self.statistic.block_mic_time += start.elapsed();
+        clauses
     }
 
     pub fn mic(
@@ -310,22 +382,69 @@ impl IC3 {
     ) -> LitVec {
         match mic_type {
             MicType::NoMic => cube,
-            MicType::DropVar(parameter) => self.mic_by_drop_var(frame, cube, constraint, parameter, None),
+            MicType::DropVar(parameter) => {
+                if parameter.level == 0 {
+                    self.solvers[frame - 1].unset_domain();
+                    self.solvers[frame - 1].set_domain(
+                        self.ts
+                            .lits_next(&cube)
+                            .iter()
+                            .copied()
+                            .chain(cube.iter().copied()),
+                    );
+                }
+                
+                let result = self.mic_by_drop_var(frame, cube, constraint, parameter, false);
+                
+                if parameter.level == 0 {
+                    self.solvers[frame - 1].unset_domain();
+                }
+                
+                result
+            },
+            MicType::MultiClauses(parameter, num_clauses) => {
+                let clauses = self.mic_by_multi_clauses(frame, &cube, constraint, parameter, num_clauses);
+                if let Some(first_clause) = clauses.into_iter().next() {
+                    first_clause
+                } else {
+                    cube
+                }
+            }
         }
     }
-    
-    // 新增一个接口，支持指定变体ID的mic函数
-    pub fn mic_with_variant(
+
+    pub fn mic_multi(
         &mut self,
         frame: usize,
         cube: LitVec,
         constraint: &[LitVec],
         mic_type: MicType,
-        variant_id: usize,
-    ) -> LitVec {
+    ) -> Vec<LitVec> {
         match mic_type {
-            MicType::NoMic => cube,
-            MicType::DropVar(parameter) => self.mic_by_drop_var(frame, cube, constraint, parameter, Some(variant_id)),
+            MicType::NoMic => vec![cube],
+            MicType::DropVar(parameter) => {
+                if parameter.level == 0 {
+                    self.solvers[frame - 1].unset_domain();
+                    self.solvers[frame - 1].set_domain(
+                        self.ts
+                            .lits_next(&cube)
+                            .iter()
+                            .copied()
+                            .chain(cube.iter().copied()),
+                    );
+                }
+                
+                let result = vec![self.mic_by_drop_var(frame, cube, constraint, parameter, false)];
+                
+                if parameter.level == 0 {
+                    self.solvers[frame - 1].unset_domain();
+                }
+                
+                result
+            },
+            MicType::MultiClauses(parameter, num_clauses) => {
+                self.mic_by_multi_clauses(frame, &cube, constraint, parameter, num_clauses)
+            }
         }
     }
 }
