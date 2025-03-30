@@ -120,8 +120,10 @@ pub struct IC3Options {
 
     // variable ordering in inductive generalization with hybrid sorting
     // topo first, then activity, decay by frame number
-
-    // 
+    
+    /// Number of clauses to generate during inductive generalization with different orderings
+    #[arg(long = "ic3-multi-clauses", default_value_t = 1)]
+    pub multi_clauses: usize,
 }
 
 #[derive(Args, Clone, Debug)]

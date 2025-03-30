@@ -104,16 +104,55 @@ impl IC3 {
             self.add_obligation(po.clone());
             return self.add_lemma(po.frame - 1, po.lemma.cube().clone(), false, Some(po));
         }
+        
+        // 获取归纳核心
         let mut mic = self.solvers[po.frame - 1].inductive_core();
-        mic = self.mic(po.frame, mic, &[], mic_type);
-        let (frame, mic) = self.push_lemma(po.frame, mic);
-        self.statistic.avg_po_cube_len += po.lemma.len();
-        po.push_to(frame);
-        self.add_obligation(po.clone());
-        if self.add_lemma(frame - 1, mic.clone(), false, Some(po)) {
-            return true;
+        
+        // 记录是否找到了不变式
+        let mut found_invariant = false;
+        
+        // 多子句生成
+        let multi_clauses = self.options.ic3.multi_clauses;
+        if multi_clauses > 1 {
+            // 第一个子句使用默认排序
+            mic = self.mic(po.frame, mic.clone(), &[], mic_type);
+            let (frame, mic_first) = self.push_lemma(po.frame, mic);
+            self.statistic.avg_po_cube_len += po.lemma.len();
+            po.push_to(frame);
+            self.add_obligation(po.clone());
+            found_invariant |= self.add_lemma(frame - 1, mic_first.clone(), false, Some(po.clone()));
+            
+            // 生成额外的子句，使用不同的排序变体
+            for i in 1..multi_clauses {
+                // 重新获取归纳核心，避免被之前的处理修改
+                let mut mic_next = self.solvers[po.frame - 1].inductive_core();
+                
+                // 使用带变体ID的mic函数，变体ID从1开始
+                mic_next = self.mic_with_variant(po.frame, mic_next, &[], mic_type, i);
+                
+                // 推送子句
+                let (frame_next, mic_next) = self.push_lemma(po.frame, mic_next);
+                
+                // 创建一个新的证明义务来记录此子句
+                let po_new = po.clone();
+                
+                // 添加子句到相应的帧
+                found_invariant |= self.add_lemma(frame_next - 1, mic_next.clone(), false, Some(po_new));
+            }
+            
+            return found_invariant;
+        } else {
+            // 原始单子句处理
+            mic = self.mic(po.frame, mic, &[], mic_type);
+            let (frame, mic) = self.push_lemma(po.frame, mic);
+            self.statistic.avg_po_cube_len += po.lemma.len();
+            po.push_to(frame);
+            self.add_obligation(po.clone());
+            if self.add_lemma(frame - 1, mic.clone(), false, Some(po)) {
+                return true;
+            }
+            return false;
         }
-        false
     }
 
     fn block(&mut self) -> Option<bool> {
@@ -267,9 +306,35 @@ impl IC3 {
             ) {
                 let mut mic = self.solvers[frame - 1].inductive_core();
                 mic = self.mic(frame, mic, constraint, MicType::DropVar(parameter));
-                let (frame, mic) = self.push_lemma(frame, mic);
-                self.add_lemma(frame - 1, mic, false, None);
-                return true;
+                
+                // 如果启用了多子句生成，对于相同的归纳核心，尝试生成多个子句
+                if self.options.ic3.multi_clauses > 1 {
+                    // 获取第一个子句的帧和子句
+                    let (frame_first, mic_first) = self.push_lemma(frame, mic.clone());
+                    let mut found_invariant = self.add_lemma(frame_first - 1, mic_first, false, None);
+                    
+                    // 生成和添加额外的子句
+                    for i in 1..self.options.ic3.multi_clauses {
+                        // 重新获取归纳核心
+                        let mut mic_next = self.solvers[frame - 1].inductive_core();
+                        
+                        // 使用不同的排序变体
+                        mic_next = self.mic_with_variant(frame, mic_next, constraint, MicType::DropVar(parameter), i);
+                        
+                        // 推送子句
+                        let (frame_next, mic_next) = self.push_lemma(frame, mic_next);
+                        
+                        // 添加子句
+                        found_invariant |= self.add_lemma(frame_next - 1, mic_next, false, None);
+                    }
+                    
+                    return found_invariant;
+                } else {
+                    // 原始单子句处理
+                    let (frame, mic) = self.push_lemma(frame, mic);
+                    self.add_lemma(frame - 1, mic, false, None);
+                    return true;
+                }
             } else {
                 if *limit == 0 {
                     return false;
@@ -327,10 +392,40 @@ impl IC3 {
                         && self.solvers[frame_idx - 1].inductive(&ctp, true)
                     {
                         let core = self.solvers[frame_idx - 1].inductive_core();
-                        let mic =
-                            self.mic(frame_idx, core, &[], MicType::DropVar(Default::default()));
-                        if self.add_lemma(frame_idx, mic, false, None) {
-                            return true;
+                        
+                        // 如果启用了多子句生成
+                        if self.options.ic3.multi_clauses > 1 {
+                            // 生成第一个子句
+                            let mic = self.mic(frame_idx, core.clone(), &[], MicType::DropVar(Default::default()));
+                            let mut found_invariant = self.add_lemma(frame_idx, mic, false, None);
+                            
+                            // 生成额外的子句
+                            for i in 1..self.options.ic3.multi_clauses {
+                                // 重新获取归纳核心
+                                let core_next = self.solvers[frame_idx - 1].inductive_core();
+                                
+                                // 使用不同的排序变体
+                                let mic_next = self.mic_with_variant(
+                                    frame_idx, 
+                                    core_next, 
+                                    &[], 
+                                    MicType::DropVar(Default::default()),
+                                    i
+                                );
+                                
+                                // 添加子句
+                                found_invariant |= self.add_lemma(frame_idx, mic_next, false, None);
+                            }
+                            
+                            if found_invariant {
+                                return true;
+                            }
+                        } else {
+                            // 原始单子句处理
+                            let mic = self.mic(frame_idx, core, &[], MicType::DropVar(Default::default()));
+                            if self.add_lemma(frame_idx, mic, false, None) {
+                                return true;
+                            }
                         }
                     } else {
                         break;

@@ -204,6 +204,7 @@ impl IC3 {
         mut cube: LitVec,
         constraint: &[LitVec],
         parameter: DropVarParameter,
+        variant_id: Option<usize>,
     ) -> LitVec {
         let start = Instant::now();
         if parameter.level == 0 {
@@ -218,18 +219,47 @@ impl IC3 {
         self.statistic.avg_mic_cube_len += cube.len();
         self.statistic.num_mic += 1;
         let mut cex = Vec::new();
-        if self.options.ic3.topo_sort {
-            // Sort by topological order
-            cube.sort();
-            // Apply reverse if requested
-            if self.options.ic3.reverse_sort {
-                cube.reverse();
+        
+        // 根据variant_id决定使用哪种排序变体
+        let variant = variant_id.unwrap_or(0);
+        
+        if variant == 0 {
+            // 默认排序：使用当前选项
+            if self.options.ic3.topo_sort {
+                // Sort by topological order
+                cube.sort();
+                // Apply reverse if requested
+                if self.options.ic3.reverse_sort {
+                    cube.reverse();
+                }
+            } else {
+                // Sort by activity
+                let ascending = !self.options.ic3.reverse_sort;
+                self.activity.sort_by_activity(&mut cube, ascending);
             }
         } else {
-            // Sort by activity
-            let ascending = !self.options.ic3.reverse_sort;
-            self.activity.sort_by_activity(&mut cube, ascending);
+            // 变体排序
+            match variant % 4 {
+                1 => {
+                    // 变体1: 始终使用拓扑排序（升序）
+                    cube.sort();
+                },
+                2 => {
+                    // 变体2: 始终使用拓扑排序（降序）
+                    cube.sort();
+                    cube.reverse();
+                },
+                3 => {
+                    // 变体3: 按活跃度排序（升序）
+                    self.activity.sort_by_activity(&mut cube, true);
+                },
+                _ => {
+                    // 变体4: 按活跃度排序（降序）
+                    self.activity.sort_by_activity(&mut cube, false);
+                }
+            }
         }
+        
         let mut keep = GHashSet::new();
         let mut i = 0;
         while i < cube.len() {
@@ -280,7 +310,22 @@ impl IC3 {
     ) -> LitVec {
         match mic_type {
             MicType::NoMic => cube,
-            MicType::DropVar(parameter) => self.mic_by_drop_var(frame, cube, constraint, parameter),
+            MicType::DropVar(parameter) => self.mic_by_drop_var(frame, cube, constraint, parameter, None),
+        }
+    }
+    
+    // 新增一个接口，支持指定变体ID的mic函数
+    pub fn mic_with_variant(
+        &mut self,
+        frame: usize,
+        cube: LitVec,
+        constraint: &[LitVec],
+        mic_type: MicType,
+        variant_id: usize,
+    ) -> LitVec {
+        match mic_type {
+            MicType::NoMic => cube,
+            MicType::DropVar(parameter) => self.mic_by_drop_var(frame, cube, constraint, parameter, Some(variant_id)),
         }
     }
 }
