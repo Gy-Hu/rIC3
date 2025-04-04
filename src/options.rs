@@ -30,6 +30,15 @@ pub struct Options {
     /// print witness when model is unsafe
     #[arg(long, default_value_t = false)]
     pub witness: bool,
+    
+    /// Path where to dump inductive invariants (if verification is successful)
+    /// This option implicitly enables dumping without needing to specify --ic3-dump-inv
+    #[arg(long = "ic3-dump-inv-file", default_value = "inv.cnf")]
+    pub ic3_dump_inv_file: String,
+    
+    /// Path to file containing clauses to load into IC3 (load before verification starts)
+    #[arg(long = "ic3-load-inv", default_value = "")]
+    pub ic3_load_inv_file: String,
 
     #[command(flatten)]
     pub ic3: IC3Options,
@@ -105,6 +114,15 @@ pub struct IC3Options {
     /// ic3 without predicate property
     #[arg(long = "ic3-no-pred-prop", default_value_t = false)]
     pub no_pred_prop: bool,
+    
+    /// dump inductive invariants to a file
+    /// (note: this can also be enabled by specifying --ic3-dump-inv-file)
+    #[arg(long = "ic3-dump-inv", default_value_t = false)]
+    pub dump_inv: bool,
+    
+    /// maximum clause size for filtering when side loading
+    #[arg(long = "ic3-max-clause-size", default_value_t = 10)]
+    pub max_clause_size: usize,
 }
 
 #[derive(Args, Clone, Debug)]

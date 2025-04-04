@@ -105,7 +105,7 @@ impl Frames {
     }
 
     pub fn invariant(&self) -> Vec<Lemma> {
-        let invariant = self.iter().position(|frame| frame.is_empty()).unwrap();
+        let invariant = self.iter().position(|frame| frame.is_empty()).unwrap_or(self.len() - 1);
         let mut invariants = Vec::new();
         for i in invariant..self.len() {
             for cube in self[i].iter() {

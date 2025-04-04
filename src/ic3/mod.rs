@@ -404,6 +404,31 @@ impl Engine for IC3 {
         if !self.base() {
             return Some(false);
         }
+        
+        // 在进入主循环之前扩展初始帧
+        self.extend();
+        
+        // 打印变量映射关系
+        if self.options.verbose > 0 {
+            self.print_var_mapping();
+        }
+        
+        // 如果指定了侧加载文件路径，从文件加载子句
+        let load_inv_file = self.options.ic3_load_inv_file.clone();
+        if !load_inv_file.is_empty() {
+            match self.side_load_clauses(&load_inv_file) {
+                Ok(count) => {
+                    if self.options.verbose == 0 && count > 0 {
+                        println!("Successfully loaded {} clauses from {}", count, load_inv_file);
+                    }
+                },
+                Err(e) => {
+                    // 即使在verbose=0时也输出错误信息，这是重要的反馈
+                    println!("Error loading clauses from {}: {}", load_inv_file, e);
+                }
+            }
+        }
+        
         loop {
             let start = Instant::now();
             loop {
@@ -415,6 +440,8 @@ impl Engine for IC3 {
                     None => {
                         self.statistic.overall_block_time += start.elapsed();
                         self.verify();
+                        // 确保无论certify选项如何都能导出归纳不变式
+                        self.dump_invariants_if_needed();
                         return Some(true);
                     }
                     _ => (),
@@ -444,6 +471,8 @@ impl Engine for IC3 {
             self.statistic.overall_propagate_time += start.elapsed();
             if propagate {
                 self.verify();
+                // 确保无论certify选项如何都能导出归纳不变式
+                self.dump_invariants_if_needed();
                 return Some(true);
             }
         }
