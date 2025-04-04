@@ -7,6 +7,7 @@ use std::ops::Deref;
 use std::fs::File;
 use std::io::{Write, BufRead, BufReader};
 use std::path::Path;
+use giputils::hash::GHashMap;
 
 pub fn verify_invariant(ts: &TransysCtx, invariants: &[Lemma]) -> bool {
     let mut solver = Solver::new();
@@ -63,13 +64,20 @@ impl IC3 {
         writeln!(&mut file, "{}", invariants.len()).expect("Failed to write to file");
         for clause in invariants.iter() {
             for lit in clause.cube().iter() {
-                write!(&mut file, "{} ", lit).expect("Failed to write to file");
+                // 转换为AIGER变量编号 (通过restore映射)
+                let aiger_lit = self.ts.restore(*lit);
+                
+                // 在AIGER格式中，变量编号是索引*2，负文字为奇数
+                let aiger_var_id = (aiger_lit.var().0 * 2) as i32;
+                let aiger_lit_id = if aiger_lit.polarity() { aiger_var_id } else { -aiger_var_id };
+                
+                write!(&mut file, "{} ", aiger_lit_id).expect("Failed to write to file");
             }
             writeln!(&mut file,"").expect("Failed to write to file");
         }
         
         if self.options.verbose > 0 {
-            println!("Inductive invariants dumped to {}", self.options.ic3_dump_inv_file);
+            println!("Inductive invariants dumped to {} in AIGER variable numbering format", self.options.ic3_dump_inv_file);
         }
     }
 
@@ -81,6 +89,21 @@ impl IC3 {
                 std::io::ErrorKind::InvalidInput, 
                 "Cannot load invariants - IC3 frames not initialized yet"
             ));
+        }
+        
+        // 建立AIGER变量ID到内部变量的映射
+        let mut aiger_to_internal = GHashMap::new();
+        for latch in self.ts.latchs.iter() {
+            if let Some(orig_var) = self.ts.restore.get(latch) {
+                let aiger_var_id = (orig_var.0 * 2) as u32;
+                aiger_to_internal.insert(aiger_var_id, *latch);
+            }
+        }
+        for input in self.ts.inputs.iter() {
+            if let Some(orig_var) = self.ts.restore.get(input) {
+                let aiger_var_id = (orig_var.0 * 2) as u32;
+                aiger_to_internal.insert(aiger_var_id, *input);
+            }
         }
         
         let file = File::open(Path::new(filepath))?;
@@ -97,6 +120,7 @@ impl IC3 {
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid clause count"))?;
         
         let mut loaded_count = 0;
+        let mut skipped_count = 0;
         
         // Read each clause and add it to IC3
         for line in lines {
@@ -105,17 +129,39 @@ impl IC3 {
                 continue;
             }
             
-            // Parse literals in the clause
+            // Parse literals in the clause (AIGER format)
             let mut lits = LitVec::new();
+            let mut valid_clause = true;
+            
             for token in line.split_whitespace() {
-                let lit_value: i32 = match token.parse() {
+                let aiger_lit_id: i32 = match token.parse() {
                     Ok(val) => val,
                     Err(_) => continue, // Skip invalid literals
                 };
                 
-                // Convert to Lit based on positive/negative value
-                let lit = Lit::from(lit_value);
-                lits.push(lit);
+                // Extract AIGER变量ID和极性
+                let aiger_var_id = (aiger_lit_id.abs() as u32); // 使用u32类型
+                // 计算AIGER变量ID (确保是偶数)
+                let aiger_var_id = aiger_var_id / 2 * 2;
+                let polarity = aiger_lit_id > 0;
+                
+                // 转换为内部变量
+                if let Some(internal_var) = aiger_to_internal.get(&aiger_var_id) {
+                    let internal_lit = internal_var.lit().not_if(!polarity);
+                    lits.push(internal_lit);
+                } else {
+                    // 如果找不到对应的内部变量，跳过这个子句
+                    if self.options.verbose > 1 {
+                        println!("Warning: AIGER variable {} not found in model, skipping clause", aiger_var_id);
+                    }
+                    valid_clause = false;
+                    break;
+                }
+            }
+            
+            if !valid_clause {
+                skipped_count += 1;
+                continue;
             }
             
             // Filter logic: Check if the clause meets requirements
@@ -123,16 +169,20 @@ impl IC3 {
                 // Add to IC3 framework (using frame level 1 and without containment check)
                 self.add_lemma(1, lits, false, None);
                 loaded_count += 1;
+            } else {
+                skipped_count += 1;
             }
         }
         
         if self.options.verbose > 0 {
-            println!("Loaded {} clauses from {} (filtered from {})", loaded_count, filepath, num_clauses);
+            println!("Loaded {} clauses from {} (filtered/skipped {} from total {})", 
+                     loaded_count, filepath, skipped_count, num_clauses);
             if loaded_count > 0 {
                 println!("Added clauses will contribute to IC3 solving process");
             } else {
                 println!("Warning: No clauses were loaded from {}. Possible reasons:", filepath);
                 println!("  - All clauses were filtered out based on criteria");
+                println!("  - The clauses referenced AIGER variables not found in model");
                 println!("  - The file format is incorrect");
                 println!("  - The file is empty");
                 println!("IC3 will proceed with standard verification without external clauses.");
@@ -229,14 +279,13 @@ impl IC3 {
 
     // 添加一个新函数用于显示AIGER和CNF变量之间的映射关系
     pub fn print_var_mapping(&self) {
-        println!("\n=== AIGER to CNF Variable Mapping ===");
-        println!("Internal Var -> AIGER Var");
+        println!("\n=== AIGER to Internal Variable Mapping ===");
         
         // 打印状态变量映射
         println!("\nState Variables:");
         for latch in self.ts.latchs.iter() {
             if let Some(orig_var) = self.ts.restore.get(latch) {
-                println!("Internal: {:<4} -> AIGER: {:<4} ({})", 
+                println!("Internal: {:<4} -> AIGER: {:>4} (AIGER ID: {})", 
                          latch, 
                          orig_var, 
                          orig_var.0 * 2);  // AIGER中的编号是变量索引*2
@@ -247,16 +296,18 @@ impl IC3 {
         println!("\nInput Variables:");
         for input in self.ts.inputs.iter() {
             if let Some(orig_var) = self.ts.restore.get(input) {
-                println!("Internal: {:<4} -> AIGER: {:<4} ({})", 
+                println!("Internal: {:<4} -> AIGER: {:>4} (AIGER ID: {})", 
                          input, 
                          orig_var, 
                          orig_var.0 * 2);
             }
         }
         
-        println!("\n=== CNF Variables in inv.cnf ===");
-        println!("CNF文件中的变量是基于内部索引的");
-        println!("例如，CNF中的变量6可能对应上面表中的Internal变量6");
+        println!("\n=== Variable Format in Files ===");
+        println!("- 使用AIGER变量ID (如26, 28, 30...)");
+        println!("- 正文字直接使用变量ID (如26)");
+        println!("- 负文字使用负数 (如-26)");
+        println!("- inv.cnf文件现在使用AIGER变量ID而非内部变量ID");
         println!("=============================================\n");
     }
 }
