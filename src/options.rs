@@ -125,6 +125,18 @@ pub struct IC3Options {
     /// frame factor for hybrid sort that controls how quickly topo weight decreases with frame
     #[arg(long = "ic3-hybrid-frame-factor", default_value_t = 0.1)]
     pub hybrid_frame_factor: f64,
+
+    /// use flip rate data for sorting
+    #[arg(long = "ic3-flip-rate-sort", default_value_t = false)]
+    pub flip_rate_sort: bool,
+
+    /// path to the flip rate JSON file
+    #[arg(long = "ic3-flip-rate-file")]
+    pub flip_rate_file: Option<PathBuf>,
+
+    /// prioritize high flip rate variables first
+    #[arg(long = "ic3-high-flip-rate-first", default_value_t = false)]
+    pub high_flip_rate_first: bool,
 }
 
 #[derive(Args, Clone, Debug)]

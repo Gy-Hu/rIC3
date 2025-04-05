@@ -16,6 +16,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use satif::Satif;
 use statistic::Statistic;
 use std::time::Instant;
+use flip_rate::FlipRateManager;
 
 mod activity;
 mod frame;
@@ -24,6 +25,7 @@ mod proofoblig;
 mod solver;
 mod statistic;
 mod verify;
+pub mod flip_rate;
 
 pub struct IC3 {
     options: Options,
@@ -43,6 +45,7 @@ pub struct IC3 {
 
     auxiliary_var: Vec<Var>,
     rng: StdRng,
+    flip_rate_manager: FlipRateManager,
 }
 
 impl IC3 {
@@ -365,6 +368,7 @@ impl IC3 {
             ts.constraints.clone()
         };
         let rng = StdRng::seed_from_u64(options.rseed);
+        let flip_rate_manager = FlipRateManager::new();
         Self {
             options,
             ts,
@@ -382,6 +386,7 @@ impl IC3 {
             auxiliary_var: Vec::new(),
             bmc_solver: None,
             rng,
+            flip_rate_manager,
         }
     }
 }

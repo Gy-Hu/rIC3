@@ -219,7 +219,23 @@ impl IC3 {
         self.statistic.num_mic += 1;
         let mut cex = Vec::new();
         
-        if self.options.ic3.topo_sort {
+        // Apply sorting based on the options
+        if self.options.ic3.flip_rate_sort {
+            // If flip rate sorting is enabled, sort based on flip rates
+            if self.flip_rate_manager.is_loaded() {
+                self.flip_rate_manager.sort_by_flip_rate(&mut cube, self.options.ic3.high_flip_rate_first);
+            } else if let Some(flip_rate_file) = &self.options.ic3.flip_rate_file {
+                // Try to load the flip rate file if not already loaded
+                if let Err(e) = self.flip_rate_manager.load_from_file(flip_rate_file) {
+                    if self.options.verbose > 0 {
+                        eprintln!("Warning: Failed to load flip rate file: {}", e);
+                    }
+                } else {
+                    // Sort after successfully loading the file
+                    self.flip_rate_manager.sort_by_flip_rate(&mut cube, self.options.ic3.high_flip_rate_first);
+                }
+            }
+        } else if self.options.ic3.topo_sort {
             if self.options.ic3.hybrid_sort {
                 // Use hybrid sorting strategy
                 self.sort_by_hybrid(&mut cube, frame);

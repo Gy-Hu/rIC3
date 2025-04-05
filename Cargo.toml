@@ -27,6 +27,8 @@ process_control = "5.0.0"
 nix = { version = "0.29.0", features = ["signal"] }
 procspawn = "1.0.0"
 shadow-rs = "1.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [build-dependencies]
 shadow-rs = "1.0.0"
