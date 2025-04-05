@@ -33,6 +33,26 @@ To view the submission for HWMCC'24, please checkout the `HWMCC24` branch or dow
 - 16-threads Portfolio ```rIC3 <AIGER FILE>```
 - single-thread IC3 ```rIC3 -e ic3 <AIGER FILE>```
 
+### CTI Sampling
+rIC3 now supports CTI (Counterexample To Induction) sampling functionality to extract states that satisfy P ∧ T ∧ ¬P'. These samples can be useful for analyzing the model behavior and identifying important state transitions.
+
+Usage:
+```
+# Enable CTI sampling with default settings (100 samples, with reduction)
+rIC3 -e ic3 --ic3-cti-sample <AIGER FILE>
+
+# Specify the number of samples to collect
+rIC3 -e ic3 --ic3-cti-sample --ic3-cti-sample-count 500 <AIGER FILE>
+
+# Disable sample reduction
+rIC3 -e ic3 --ic3-cti-sample --ic3-cti-reduce=false <AIGER FILE>
+
+# Specify output file
+rIC3 -e ic3 --ic3-cti-sample --ic3-cti-sample-file samples.txt <AIGER FILE>
+```
+
+The CTI samples are saved in a text file where each line represents one state cube in AIGER variable numbering format.
+
 ### Docker
 - build image: ```docker build -t ric3 .```
 - run: ```docker run -v <AIGER FILE>:/model.aig ric3 model.aig```

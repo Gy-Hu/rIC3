@@ -1,7 +1,7 @@
 use super::{IC3, proofoblig::ProofObligation};
 use crate::transys::{TransysCtx, TransysIf, unroll::TransysUnroll};
 use cadical::Solver;
-use logic_form::{Lemma, LitVec, Lit};
+use logic_form::{Lemma, LitVec};
 use satif::Satif;
 use std::ops::Deref;
 use std::fs::File;
@@ -140,7 +140,7 @@ impl IC3 {
                 };
                 
                 // Extract AIGER变量ID和极性
-                let aiger_var_id = (aiger_lit_id.abs() as u32); // 使用u32类型
+                let aiger_var_id = aiger_lit_id.abs() as u32; // 使用u32类型
                 // 计算AIGER变量ID (确保是偶数)
                 let aiger_var_id = aiger_var_id / 2 * 2;
                 let polarity = aiger_lit_id > 0;
@@ -309,5 +309,170 @@ impl IC3 {
         println!("- 负文字使用负数 (如-26)");
         println!("- inv.cnf文件现在使用AIGER变量ID而非内部变量ID");
         println!("=============================================\n");
+    }
+
+    // Feature 3: CTI Sampling - Implement CTI (Counterexample To Induction) sampling functionality
+    pub fn sample_cti(&mut self, sample_count: usize, reduce_samples: bool) -> Result<usize, std::io::Error> {
+        use std::fs::File;
+        use std::io::Write;
+        use std::collections::HashSet;
+        use std::time::Instant;
+
+        // Make sure we have at least the first frame set up
+        if self.solvers.len() < 1 {
+            self.extend(); // Create initial frame if needed
+        }
+
+        // Create a solver for CTI sampling
+        let mut solver = cadical::Solver::new();
+        self.ts.load_trans(&mut solver, true);
+        
+        // Setup Not-Property constraint for next state
+        // P /\ T /\ !P'
+        // First, add P (property is false)
+        solver.add_clause(&self.ts.bad.cube());
+        
+        // We need !P' (property is true in next state)
+        // Get the primed version of the property
+        let next_bad = self.ts.lits_next(&self.ts.bad.cube());
+        let not_next_bad: LitVec = next_bad.iter().map(|l| !*l).collect();
+        
+        // Add the negated property in next state
+        solver.add_clause(&not_next_bad);
+        
+        let start_time = Instant::now();
+        let mut file = File::create(&self.options.ic3.cti_sample_file)?;
+        let mut samples_collected = 0;
+        let mut unique_samples = HashSet::new();
+        let mut retry_count = 0;
+        const MAX_RETRIES: usize = 1000; // To prevent infinite loops
+        
+        // Header information
+        writeln!(&mut file, "# CTI Samples for model: {}", self.options.model.display())?;
+        writeln!(&mut file, "# Format: Each line contains one state cube (conjunction of literals)")?;
+        writeln!(&mut file, "# Each sample is a state s where s /\\ T /\\ !P' is satisfiable")?;
+        writeln!(&mut file, "# Total samples requested: {}", sample_count)?;
+        writeln!(&mut file, "# Reduction enabled: {}", reduce_samples)?;
+        writeln!(&mut file, "# ===================================")?;
+        
+        let mut accumulated_lits = 0;
+        while samples_collected < sample_count && retry_count < MAX_RETRIES {
+            // Check if the formula is satisfiable
+            if !solver.solve(&[]) {
+                // If we can't find any more samples, break out
+                if self.options.verbose > 0 {
+                    println!("No more CTI samples can be found - formula became UNSAT after {} samples", samples_collected);
+                }
+                break;
+            }
+            
+            // Extract state literals from model
+            let mut state_lits = LitVec::new();
+            for latch in self.ts.latchs.iter() {
+                let lit = latch.lit();
+                if let Some(v) = solver.sat_value(lit) {
+                    state_lits.push(lit.not_if(!v));
+                }
+            }
+            
+            // If sample reduction is enabled, reduce the sample
+            if reduce_samples {
+                state_lits = self.reduce_cti_sample(&state_lits, &next_bad);
+            }
+            
+            // Check if this sample is unique (to avoid duplicates)
+            let sample_str = format!("{:?}", state_lits);
+            if unique_samples.contains(&sample_str) {
+                retry_count += 1;
+                // Add blocking clause to prevent this exact model from being found again
+                let block_clause: LitVec = state_lits.iter().map(|l| !*l).collect();
+                solver.add_clause(&block_clause);
+                continue;
+            }
+            
+            // Record the unique sample
+            unique_samples.insert(sample_str);
+            samples_collected += 1;
+            accumulated_lits += state_lits.len();
+            retry_count = 0;
+            
+            // Write sample to file
+            for lit in &state_lits {
+                // Convert to AIGER-compatible variable numbering
+                if let Some(orig_var) = self.ts.restore.get(&lit.var()) {
+                    let aiger_var_id = (orig_var.0 * 2) as i32;
+                    let aiger_lit_id = if lit.polarity() { aiger_var_id } else { -aiger_var_id };
+                    write!(&mut file, "{} ", aiger_lit_id)?;
+                }
+            }
+            writeln!(&mut file)?;
+            
+            // Block this state to find the next unique CTI
+            let block_clause: LitVec = state_lits.iter().map(|l| !*l).collect();
+            solver.add_clause(&block_clause);
+        }
+        
+        let elapsed = start_time.elapsed();
+        let avg_lits_per_sample = if samples_collected > 0 { accumulated_lits as f64 / samples_collected as f64 } else { 0.0 };
+        
+        // Write summary footer
+        writeln!(&mut file, "# ===================================")?;
+        writeln!(&mut file, "# Sampling completed in {:.2?}", elapsed)?;
+        writeln!(&mut file, "# Total samples collected: {}", samples_collected)?;
+        writeln!(&mut file, "# Average literals per sample: {:.2}", avg_lits_per_sample)?;
+        
+        if self.options.verbose > 0 {
+            println!("CTI sampling complete: Collected {} samples in {:.2?}", samples_collected, elapsed);
+            println!("Average literals per sample: {:.2}", avg_lits_per_sample);
+            println!("Samples saved to {}", self.options.ic3.cti_sample_file);
+        }
+        
+        Ok(samples_collected)
+    }
+    
+    // Helper method to reduce CTI samples by removing literals that aren't necessary
+    // This is similar to ternary simulation in the example code's reduce_vars method
+    fn reduce_cti_sample(&self, state_lits: &LitVec, next_prop: &LitVec) -> LitVec {
+        use std::collections::HashSet;
+        
+        // If no literals to reduce, return as is
+        if state_lits.is_empty() {
+            return state_lits.clone();
+        }
+        
+        // Create a new solver for reduction
+        let mut red_solver = cadical::Solver::new();
+        self.ts.load_trans(&mut red_solver, true);
+        
+        // Add requirement that next_prop must be satisfied
+        for lit in next_prop {
+            red_solver.add_clause(&[*lit]);
+        }
+        
+        // Create a hash set for quick lookups
+        let mut necessary_lits = HashSet::new();
+        
+        // Try removing each literal one by one
+        for (i, lit) in state_lits.iter().enumerate() {
+            // Create a candidate cube without the current literal
+            let mut assumps = Vec::new();
+            for (j, other_lit) in state_lits.iter().enumerate() {
+                if i != j {
+                    assumps.push(*other_lit);
+                }
+            }
+            
+            // Check if removing this literal still gives us a valid CTI
+            if !red_solver.solve(&assumps) {
+                // If unsatisfiable, this literal is necessary
+                necessary_lits.insert(*lit);
+            }
+        }
+        
+        // Rebuild the reduced state as a Vec in the original order
+        state_lits.iter()
+            .filter(|lit| necessary_lits.contains(lit))
+            .cloned()
+            .collect()
     }
 }

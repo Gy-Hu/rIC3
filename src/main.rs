@@ -81,6 +81,34 @@ fn main() {
     if options.preprocess.sec {
         panic!("sec not support");
     }
+    
+    // If CTI sampling is requested, perform the sampling and exit
+    if options.ic3.cti_sample && options.engine == options::Engine::IC3 {
+        if options.verbose > 0 {
+            println!("CTI sampling mode activated");
+            println!("Target sample count: {}", options.ic3.cti_sample_count);
+            println!("Sample reduction: {}", options.ic3.cti_reduce);
+            println!("Output file: {}", options.ic3.cti_sample_file);
+        }
+        
+        // Create IC3 engine
+        let mut ic3 = IC3::new(options.clone(), ts, vec![]);
+        
+        // Perform CTI sampling
+        match ic3.sample_cti(options.ic3.cti_sample_count, options.ic3.cti_reduce) {
+            Ok(samples) => {
+                if options.verbose > 0 {
+                    println!("CTI sampling completed with {} samples", samples);
+                }
+                exit(0);
+            },
+            Err(e) => {
+                eprintln!("Error during CTI sampling: {}", e);
+                exit(1);
+            }
+        }
+    }
+    
     let mut engine: Box<dyn Engine> = match options.engine {
         options::Engine::IC3 => Box::new(IC3::new(options.clone(), ts, vec![])),
         options::Engine::Kind => Box::new(Kind::new(options.clone(), ts)),

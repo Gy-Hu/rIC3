@@ -69,7 +69,7 @@ pub struct Options {
     pub interrupt_statistic: bool,
 }
 
-#[derive(Copy, Clone, ValueEnum, Debug)]
+#[derive(Copy, Clone, ValueEnum, Debug, PartialEq, Eq)]
 pub enum Engine {
     /// ic3
     IC3,
@@ -123,6 +123,22 @@ pub struct IC3Options {
     /// maximum clause size for filtering when side loading
     #[arg(long = "ic3-max-clause-size", default_value_t = 10)]
     pub max_clause_size: usize,
+
+    /// enable CTI sampling - P /\ T /\ !P' pattern discovery
+    #[arg(long = "ic3-cti-sample", default_value_t = false)]
+    pub cti_sample: bool,
+
+    /// CTI sample count - number of samples to collect
+    #[arg(long = "ic3-cti-sample-count", default_value_t = 100)]
+    pub cti_sample_count: usize,
+
+    /// CTI sample output file
+    #[arg(long = "ic3-cti-sample-file", default_value = "cti_samples.txt")]
+    pub cti_sample_file: String,
+
+    /// Reduce CTI samples (ternary simulation-like reduction)
+    #[arg(long = "ic3-cti-reduce", default_value_t = true)]
+    pub cti_reduce: bool,
 }
 
 #[derive(Args, Clone, Debug)]
