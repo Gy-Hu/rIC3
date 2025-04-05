@@ -49,9 +49,9 @@ impl IC3 {
         }
     }
     
-    // 单独处理导出逻辑，不依赖于certify选项
+    // Handle export logic separately, not dependent on the certify option
     pub fn dump_invariants_if_needed(&mut self) {
-        // 如果设置了导出选项，导出归纳不变式
+        // Export inductive invariants if the export option is set
         if self.options.ic3.dump_inv || self.options.ic3_dump_inv_file != "inv.cnf" {
             let invariants = self.frame.invariant();
             self.dump_invariants(&invariants);
@@ -64,10 +64,10 @@ impl IC3 {
         writeln!(&mut file, "{}", invariants.len()).expect("Failed to write to file");
         for clause in invariants.iter() {
             for lit in clause.cube().iter() {
-                // 转换为AIGER变量编号 (通过restore映射)
+                // Convert to AIGER variable numbers (through restore mapping)
                 let aiger_lit = self.ts.restore(*lit);
                 
-                // 在AIGER格式中，变量编号是索引*2，负文字为奇数
+                // In AIGER format, variable numbers are index*2, negative literals are odd
                 let aiger_var_id = (aiger_lit.var().0 * 2) as i32;
                 let aiger_lit_id = if aiger_lit.polarity() { aiger_var_id } else { -aiger_var_id };
                 
@@ -83,7 +83,7 @@ impl IC3 {
 
     // Feature 2: Side-load clauses from file (with filtering)
     pub fn side_load_clauses(&mut self, filepath: &str) -> Result<usize, std::io::Error> {
-        // 确保我们有至少2个帧 (0和1)
+        // Ensure we have at least 2 frames (0 and 1)
         if self.solvers.len() < 2 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput, 
@@ -91,7 +91,7 @@ impl IC3 {
             ));
         }
         
-        // 建立AIGER变量ID到内部变量的映射
+        // Establish AIGER variable ID to internal variable mapping
         let mut aiger_to_internal = GHashMap::new();
         for latch in self.ts.latchs.iter() {
             if let Some(orig_var) = self.ts.restore.get(latch) {
@@ -139,18 +139,18 @@ impl IC3 {
                     Err(_) => continue, // Skip invalid literals
                 };
                 
-                // Extract AIGER变量ID和极性
-                let aiger_var_id = aiger_lit_id.abs() as u32; // 使用u32类型
-                // 计算AIGER变量ID (确保是偶数)
+                // Extract AIGER variable ID and polarity
+                let aiger_var_id = aiger_lit_id.abs() as u32; // Use u32 type
+                // Calculate AIGER variable ID (ensure it's even)
                 let aiger_var_id = aiger_var_id / 2 * 2;
                 let polarity = aiger_lit_id > 0;
                 
-                // 转换为内部变量
+                // Convert to internal variable
                 if let Some(internal_var) = aiger_to_internal.get(&aiger_var_id) {
                     let internal_lit = internal_var.lit().not_if(!polarity);
                     lits.push(internal_lit);
                 } else {
-                    // 如果找不到对应的内部变量，跳过这个子句
+                    // Skip this clause if the corresponding internal variable cannot be found
                     if self.options.verbose > 1 {
                         println!("Warning: AIGER variable {} not found in model, skipping clause", aiger_var_id);
                     }
@@ -277,22 +277,22 @@ impl IC3 {
         }
     }
 
-    // 添加一个新函数用于显示AIGER和CNF变量之间的映射关系
+    // Add a new function to display the mapping between AIGER and CNF variables
     pub fn print_var_mapping(&self) {
         println!("\n=== AIGER to Internal Variable Mapping ===");
         
-        // 打印状态变量映射
+        // Print state variable mappings
         println!("\nState Variables:");
         for latch in self.ts.latchs.iter() {
             if let Some(orig_var) = self.ts.restore.get(latch) {
                 println!("Internal: {:<4} -> AIGER: {:>4} (AIGER ID: {})", 
                          latch, 
                          orig_var, 
-                         orig_var.0 * 2);  // AIGER中的编号是变量索引*2
+                         orig_var.0 * 2);  // In AIGER, variable numbers are index*2
             }
         }
         
-        // 打印输入变量映射
+        // Print input variable mappings
         println!("\nInput Variables:");
         for input in self.ts.inputs.iter() {
             if let Some(orig_var) = self.ts.restore.get(input) {
@@ -304,10 +304,10 @@ impl IC3 {
         }
         
         println!("\n=== Variable Format in Files ===");
-        println!("- 使用AIGER变量ID (如26, 28, 30...)");
-        println!("- 正文字直接使用变量ID (如26)");
-        println!("- 负文字使用负数 (如-26)");
-        println!("- inv.cnf文件现在使用AIGER变量ID而非内部变量ID");
+        println!("- Using AIGER variable IDs (e.g., 26, 28, 30...)");
+        println!("- Positive literals use the variable ID directly (e.g., 26)");
+        println!("- Negative literals use negative numbers (e.g., -26)");
+        println!("- inv.cnf file now uses AIGER variable IDs instead of internal variable IDs");
         println!("=============================================\n");
     }
 
@@ -404,7 +404,7 @@ impl IC3 {
                     let aiger_var_id = (orig_var.0 * 2) as i32;
                     let mut aiger_lit_id = if lit.polarity() { aiger_var_id } else { -aiger_var_id };
                     
-                    // 如果启用了取反选项，则取反文字
+                    // If inversion option is enabled, invert the literal
                     if self.options.ic3.cti_invert {
                         aiger_lit_id = -aiger_lit_id;
                     }

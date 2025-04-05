@@ -405,15 +405,15 @@ impl Engine for IC3 {
             return Some(false);
         }
         
-        // 在进入主循环之前扩展初始帧
+        // Expand the initial frame before entering the main loop
         self.extend();
         
-        // 打印变量映射关系
+        // Print variable mapping relationships
         if self.options.verbose > 0 {
             self.print_var_mapping();
         }
         
-        // 如果指定了侧加载文件路径，从文件加载子句
+        // Load clauses from file if a side-load file path is specified
         let load_inv_file = self.options.ic3_load_inv_file.clone();
         if !load_inv_file.is_empty() {
             match self.side_load_clauses(&load_inv_file) {
@@ -423,7 +423,7 @@ impl Engine for IC3 {
                     }
                 },
                 Err(e) => {
-                    // 即使在verbose=0时也输出错误信息，这是重要的反馈
+                    // Output error messages even when verbose=0, as this is important feedback
                     println!("Error loading clauses from {}: {}", load_inv_file, e);
                 }
             }
@@ -440,7 +440,7 @@ impl Engine for IC3 {
                     None => {
                         self.statistic.overall_block_time += start.elapsed();
                         self.verify();
-                        // 确保无论certify选项如何都能导出归纳不变式
+                        // Ensure inductive invariants are exported regardless of certify option
                         self.dump_invariants_if_needed();
                         return Some(true);
                     }
@@ -471,7 +471,7 @@ impl Engine for IC3 {
             self.statistic.overall_propagate_time += start.elapsed();
             if propagate {
                 self.verify();
-                // 确保无论certify选项如何都能导出归纳不变式
+                // Ensure inductive invariants are exported regardless of certify option
                 self.dump_invariants_if_needed();
                 return Some(true);
             }
