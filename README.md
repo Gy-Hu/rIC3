@@ -49,6 +49,9 @@ rIC3 -e ic3 --ic3-cti-sample --ic3-cti-reduce=false <AIGER FILE>
 
 # Specify output file
 rIC3 -e ic3 --ic3-cti-sample --ic3-cti-sample-file samples.txt <AIGER FILE>
+
+# Invert literals in the output (useful for mapping to invariant clauses)
+rIC3 -e ic3 --ic3-cti-sample --ic3-cti-invert <AIGER FILE>
 ```
 
 The CTI samples are saved in a text file where each line represents one state cube in AIGER variable numbering format.

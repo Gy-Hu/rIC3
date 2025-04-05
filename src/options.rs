@@ -136,9 +136,13 @@ pub struct IC3Options {
     #[arg(long = "ic3-cti-sample-file", default_value = "cti_samples.txt")]
     pub cti_sample_file: String,
 
-    /// Reduce CTI samples (ternary simulation-like reduction)
+    /// CTI sample reduction
     #[arg(long = "ic3-cti-reduce", default_value_t = true)]
     pub cti_reduce: bool,
+
+    /// Invert literals in CTI samples (for easier analysis with invariants)
+    #[arg(long = "ic3-cti-invert", default_value_t = false)]
+    pub cti_invert: bool,
 }
 
 #[derive(Args, Clone, Debug)]

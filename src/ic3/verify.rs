@@ -353,6 +353,7 @@ impl IC3 {
         writeln!(&mut file, "# Each sample is a state s where s /\\ T /\\ !P' is satisfiable")?;
         writeln!(&mut file, "# Total samples requested: {}", sample_count)?;
         writeln!(&mut file, "# Reduction enabled: {}", reduce_samples)?;
+        writeln!(&mut file, "# Literals inverted: {}", self.options.ic3.cti_invert)?;
         writeln!(&mut file, "# ===================================")?;
         
         let mut accumulated_lits = 0;
@@ -401,7 +402,13 @@ impl IC3 {
                 // Convert to AIGER-compatible variable numbering
                 if let Some(orig_var) = self.ts.restore.get(&lit.var()) {
                     let aiger_var_id = (orig_var.0 * 2) as i32;
-                    let aiger_lit_id = if lit.polarity() { aiger_var_id } else { -aiger_var_id };
+                    let mut aiger_lit_id = if lit.polarity() { aiger_var_id } else { -aiger_var_id };
+                    
+                    // 如果启用了取反选项，则取反文字
+                    if self.options.ic3.cti_invert {
+                        aiger_lit_id = -aiger_lit_id;
+                    }
+                    
                     write!(&mut file, "{} ", aiger_lit_id)?;
                 }
             }
