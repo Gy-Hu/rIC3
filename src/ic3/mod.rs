@@ -17,6 +17,7 @@ use satif::Satif;
 use statistic::Statistic;
 use std::time::Instant;
 use flip_rate::FlipRateManager;
+use mab::{NonStationaryMAB, SolverPhase, determine_phase};
 
 mod activity;
 mod frame;
@@ -26,6 +27,7 @@ mod solver;
 mod statistic;
 mod verify;
 pub mod flip_rate;
+pub mod mab;
 
 pub struct IC3 {
     options: Options,
@@ -46,6 +48,11 @@ pub struct IC3 {
     auxiliary_var: Vec<Var>,
     rng: StdRng,
     flip_rate_manager: FlipRateManager,
+    
+    // Add MAB for adaptive ordering strategies
+    mab: Option<NonStationaryMAB>,
+    last_reward_update: Instant,
+    use_adaptive_ordering: bool,
 }
 
 impl IC3 {
@@ -369,6 +376,20 @@ impl IC3 {
         };
         let rng = StdRng::seed_from_u64(options.rseed);
         let flip_rate_manager = FlipRateManager::new();
+        
+        // Initialize MAB if adaptive ordering is enabled
+        let use_adaptive_ordering = options.ic3.adaptive_ordering;
+        let mab = if use_adaptive_ordering {
+            Some(NonStationaryMAB::new(
+                20,             // window size
+                0.3,            // initial exploration rate
+                0.995,          // exploration decay rate
+                0.05,           // minimum exploration rate
+            ))
+        } else {
+            None
+        };
+        
         Self {
             options,
             ts,
@@ -387,7 +408,37 @@ impl IC3 {
             bmc_solver: None,
             rng,
             flip_rate_manager,
+            mab,
+            last_reward_update: Instant::now(),
+            use_adaptive_ordering,
         }
+    }
+    
+    // Function to update ordering strategy based on MAB
+    fn update_ordering_strategy(&mut self) {
+        if !self.use_adaptive_ordering || self.mab.is_none() {
+            return;
+        }
+        
+        let mab = self.mab.as_mut().unwrap();
+        
+        // Calculate reward for the previous strategy if enough time has passed
+        if self.last_reward_update.elapsed().as_secs() >= 1 {
+            let phase = determine_phase(&self.statistic, self.frame.len());
+            let reward = mab.calculate_reward(&self.statistic, phase);
+            mab.update(reward);
+            self.last_reward_update = Instant::now();
+        }
+        
+        // Select new strategy
+        let strategy = mab.select();
+        let (topo_sort, reverse_sort, flip_rate_sort, high_flip_rate_first) = strategy.to_options();
+        
+        // Update options
+        self.options.ic3.topo_sort = topo_sort;
+        self.options.ic3.reverse_sort = reverse_sort;
+        self.options.ic3.flip_rate_sort = flip_rate_sort;
+        self.options.ic3.high_flip_rate_first = high_flip_rate_first;
     }
 }
 
@@ -397,6 +448,9 @@ impl Engine for IC3 {
             return Some(false);
         }
         loop {
+            // Update ordering strategy before blocking
+            self.update_ordering_strategy();
+            
             let start = Instant::now();
             loop {
                 match self.block() {
@@ -431,6 +485,10 @@ impl Engine for IC3 {
             }
             self.statistic.overall_block_time += blocked_time;
             self.extend();
+            
+            // Update ordering strategy before propagation
+            self.update_ordering_strategy();
+            
             let start = Instant::now();
             let propagate = self.propagate(None);
             self.statistic.overall_propagate_time += start.elapsed();

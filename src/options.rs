@@ -137,6 +137,10 @@ pub struct IC3Options {
     /// prioritize high flip rate variables first
     #[arg(long = "ic3-high-flip-rate-first", default_value_t = false)]
     pub high_flip_rate_first: bool,
+
+    /// Enable adaptive ordering with multi-armed bandit algorithm
+    #[arg(long = "ic3-adaptive-ordering", default_value_t = false)]
+    pub adaptive_ordering: bool,
 }
 
 #[derive(Args, Clone, Debug)]
