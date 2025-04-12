@@ -224,6 +224,24 @@ impl IC3 {
             // If flip rate sorting is enabled, sort based on flip rates
             if self.flip_rate_manager.is_loaded() {
                 self.flip_rate_manager.sort_by_flip_rate(&mut cube, self.options.ic3.high_flip_rate_first);
+            } else if self.options.ic3.calculate_flip_rates {
+                // Use direct FFI calculation of flip rates
+                // Use the model file directly from options instead of trying to write it
+                let model_path = self.options.model.clone();
+                
+                // Calculate flip rates from the file
+                if let Err(e) = self.flip_rate_manager.calculate_from_model(
+                    &model_path,
+                    self.options.ic3.flip_rate_vectors,
+                    self.options.ic3.flip_rate_seeds
+                ) {
+                    if self.options.verbose > 0 {
+                        eprintln!("Warning: Failed to calculate flip rates: {}", e);
+                    }
+                } else {
+                    // Sort after successfully calculating flip rates
+                    self.flip_rate_manager.sort_by_flip_rate(&mut cube, self.options.ic3.high_flip_rate_first);
+                }
             } else if let Some(flip_rate_file) = &self.options.ic3.flip_rate_file {
                 // Try to load the flip rate file if not already loaded
                 if let Err(e) = self.flip_rate_manager.load_from_file(flip_rate_file) {

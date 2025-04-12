@@ -138,6 +138,18 @@ pub struct IC3Options {
     #[arg(long = "ic3-high-flip-rate-first", default_value_t = false)]
     pub high_flip_rate_first: bool,
 
+    /// Calculate flip rates directly using FFI (no need for external JSON file)
+    #[arg(long = "ic3-calculate-flip-rates", default_value_t = false)]
+    pub calculate_flip_rates: bool,
+
+    /// Number of simulation vectors for flip rate calculation
+    #[arg(long = "ic3-flip-rate-vectors", default_value_t = 1000)]
+    pub flip_rate_vectors: u32,
+
+    /// Number of random seeds for flip rate calculation
+    #[arg(long = "ic3-flip-rate-seeds", default_value_t = 1)]
+    pub flip_rate_seeds: u32,
+
     /// Enable adaptive ordering with multi-armed bandit algorithm
     #[arg(long = "ic3-adaptive-ordering", default_value_t = false)]
     pub adaptive_ordering: bool,

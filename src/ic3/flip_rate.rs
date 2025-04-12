@@ -1,6 +1,7 @@
 use logic_form::Var;
 use std::{collections::HashMap, fs::File, io::BufReader, path::Path};
 use serde::{Deserialize, Serialize};
+use aig::aigsim_ffi;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FlipRateData {
@@ -28,6 +29,24 @@ impl FlipRateManager {
             flip_rates: HashMap::new(),
             loaded: false,
         }
+    }
+    
+    /// Calculate flip rates directly from an Aig model using FFI
+    pub fn calculate_from_model(&mut self, aig_path: &Path, vectors: u32, seeds: u32) -> Result<(), String> {
+        // Call FFI function to calculate flip rates
+        let flip_rates = aigsim_ffi::calculate_flip_rates(
+            aig_path, 
+            vectors, 
+            seeds
+        )?;
+        
+        // Convert results to our format
+        for (var_id, rate) in flip_rates {
+            self.flip_rates.insert(Var::from(var_id / 2), rate);
+        }
+        
+        self.loaded = true;
+        Ok(())
     }
 
     /// Load flip rate data from a JSON file
