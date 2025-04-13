@@ -7,7 +7,7 @@ use rIC3::{
     bmc::BMC,
     certificate,
     frontend::aig::aig_preprocess,
-    ic3::IC3,
+    ic3::{self, IC3},
     kind::Kind,
     options::{self, Options},
     portfolio::Portfolio,
@@ -27,6 +27,21 @@ fn main() {
     options.model = options.model.canonicalize().unwrap();
     if options.verbose > 0 {
         println!("the model to be checked: {}", options.model.display());
+    }
+    
+    // Check if we should only calculate and print flip rates
+    if options.ic3.only_flip_rates {
+        if !options.ic3.calculate_flip_rates {
+            eprintln!("Error: --ic3-only-flip-rates requires --ic3-calculate-flip-rates");
+            exit(1);
+        }
+        // Call standalone function to calculate and print flip rates, then exit
+        ic3::flip_rate::calculate_and_print_flip_rates(
+            &options.model,
+            options.ic3.flip_rate_vectors,
+            options.ic3.flip_rate_seeds
+        );
+        // The function above never returns (it calls exit)
     }
     let mut aig = match options.model.extension() {
         Some(ext) if (ext == "btor") | (ext == "btor2") => panic!(

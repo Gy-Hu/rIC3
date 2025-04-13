@@ -150,6 +150,10 @@ pub struct IC3Options {
     #[arg(long = "ic3-flip-rate-seeds", default_value_t = 1)]
     pub flip_rate_seeds: u32,
 
+    /// Only calculate and print flip rates, then exit (requires --ic3-calculate-flip-rates)
+    #[arg(long = "ic3-only-flip-rates", default_value_t = false)]
+    pub only_flip_rates: bool,
+
     /// Enable adaptive ordering with multi-armed bandit algorithm
     #[arg(long = "ic3-adaptive-ordering", default_value_t = false)]
     pub adaptive_ordering: bool,

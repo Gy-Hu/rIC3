@@ -2,6 +2,8 @@ use logic_form::Var;
 use std::{collections::HashMap, fs::File, io::BufReader, path::Path};
 use serde::{Deserialize, Serialize};
 use aig::aigsim_ffi;
+use std::io::Write;
+use std::process::exit;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FlipRateData {
@@ -23,6 +25,44 @@ pub struct FlipRateManager {
     loaded: bool,
 }
 
+/// Standalone function to calculate and print flip rates, then exit
+pub fn calculate_and_print_flip_rates(aig_path: &Path, vectors: u32, seeds: u32) -> ! {
+    println!("Calculating flip rates for {} with {} vectors and {} seeds...", aig_path.display(), vectors, seeds);
+    
+    // Call FFI function to calculate flip rates
+    let flip_rates = match aigsim_ffi::calculate_flip_rates(aig_path, vectors, seeds) {
+        Ok(rates) => rates,
+        Err(e) => {
+            eprintln!("Error calculating flip rates: {}", e);
+            exit(1);
+        }
+    };
+    
+    // Collect rates for printing
+    let mut rates_for_printing = Vec::new();
+    for (var_id, rate) in flip_rates {
+        rates_for_printing.push((var_id / 2, rate));
+    }
+    
+    // Print the flip rates for each latch
+    println!("\n=== Latch Flip Rates (Total cycles: {}, Seeds: {}) ===", vectors, seeds);
+    println!("{:<8} {:<12}", "Latch", "Flip Rate (%)");
+    println!("{:-<8} {:-<12}", "", "");
+    
+    // Sort by variable ID for consistent output
+    rates_for_printing.sort_by_key(|(var_id, _)| *var_id);
+    
+    for (var_id, rate) in rates_for_printing {
+        // Convert the rate to a percentage with 2 decimal places
+        let rate_percentage = (rate as f64) / 10.0;
+        println!("{:<8} {:<12.2}", var_id, rate_percentage);
+    }
+    println!("=======================================\n");
+    
+    // Exit successfully
+    exit(0);
+}
+
 impl FlipRateManager {
     pub fn new() -> Self {
         Self {
@@ -40,10 +80,31 @@ impl FlipRateManager {
             seeds
         )?;
         
-        // Convert results to our format
+        // Convert results to our format and collect them for printing
+        let mut rates_for_printing = Vec::new();
         for (var_id, rate) in flip_rates {
-            self.flip_rates.insert(Var::from(var_id / 2), rate);
+            let var = Var::from(var_id / 2);
+            self.flip_rates.insert(var, rate);
+            rates_for_printing.push((var, rate));
         }
+        
+        // Print the flip rates for each latch
+        println!("\n=== Latch Flip Rates (Total cycles: {}, Seeds: {}) ===", vectors, seeds);
+        println!("{:<8} {:<12}", "Latch", "Flip Rate (%)");
+        println!("{:-<8} {:-<12}", "", "");
+        
+        // Sort by variable ID for consistent output
+        rates_for_printing.sort_by_key(|(var, _)| *var);
+        
+        for (var, rate) in rates_for_printing {
+            // Convert the rate to a percentage with 2 decimal places
+            let rate_percentage = (rate as f64) / 10.0;
+            println!("{:<8} {:<12.2}", var, rate_percentage);
+        }
+        println!("=======================================\n");
+        
+        // Ensure output is flushed
+        std::io::stdout().flush().map_err(|e| format!("Failed to flush stdout: {}", e))?;
         
         self.loaded = true;
         Ok(())
