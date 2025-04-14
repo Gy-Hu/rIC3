@@ -1,6 +1,3 @@
-[submodule "deps/aig-rs"]
-	path = deps/aig-rs
-	url = https://github.com/gipsyh/aig-rs.git
 [submodule "deps/logic-form"]
 	path = deps/logic-form
 	url = https://github.com/gipsyh/logic-form.git
