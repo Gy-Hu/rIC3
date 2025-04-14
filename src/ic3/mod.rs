@@ -16,6 +16,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use satif::Satif;
 use statistic::Statistic;
 use std::time::Instant;
+use std::path::Path;
 use flip_rate::FlipRateManager;
 use mab::{NonStationaryMAB, SolverPhase, determine_phase};
 
@@ -375,10 +376,23 @@ impl IC3 {
             ts.constraints.clone()
         };
         let rng = StdRng::seed_from_u64(options.rseed);
-        let flip_rate_manager = FlipRateManager::new();
+        let mut flip_rate_manager = FlipRateManager::new();
         
         // Initialize MAB if adaptive ordering is enabled
         let use_adaptive_ordering = options.ic3.adaptive_ordering;
+        
+        // Calculate flip rates if adaptive ordering is enabled
+        if use_adaptive_ordering {
+            if let Some(aig_path) = options.model.clone().to_str() {
+                let path = Path::new(aig_path);
+                // Calculate flip rates with default parameters (1000 vectors, 5 seeds)
+                // These parameters can be adjusted based on model size
+                if let Err(e) = flip_rate_manager.calculate_from_model(path, 1000, 5) {
+                    println!("[ADAPTIVE] Warning: Failed to calculate flip rates: {}", e);
+                }
+            }
+        }
+        
         let mab = if use_adaptive_ordering {
             Some(NonStationaryMAB::new(
                 20,             // window size
@@ -449,26 +463,29 @@ impl IC3 {
         // Only print when strategy changes
         if old_topo != topo_sort || old_reverse != reverse_sort || 
            old_flip_rate != flip_rate_sort || old_high_first != high_flip_rate_first {
-            // Print top 5 highest flip rates for context
-            if flip_rate_sort || high_flip_rate_first {
-                // Only show flip rates when they're being used for ordering
-                self.print_top_flip_rates(5);
-            }
             
             // Print strategy change in a concise format
             let strategy_name = self.get_strategy_description(topo_sort, reverse_sort, flip_rate_sort, high_flip_rate_first);
-            println!("[ADAPTIVE] Strategy change: {}", strategy_name);
+            
+            // Check if this is a flip-rate based strategy
+            if flip_rate_sort || high_flip_rate_first {
+                // Only show flip rates when they're being used for ordering
+                self.print_flip_rate_strategy(strategy_name);
+            } else {
+                println!("[ADAPTIVE] Strategy change: {}", strategy_name);
+            }
         }
     }
     
-    // Helper method to print flip rate status
-    fn print_top_flip_rates(&self, _n: usize) {
+    // Helper method to print flip rate strategy status
+    fn print_flip_rate_strategy(&self, strategy_name: String) {
         if !self.flip_rate_manager.is_loaded() {
             println!("[ADAPTIVE] No flip rate data loaded");
+            println!("[ADAPTIVE] Strategy change: {}", strategy_name);
             return;
         }
         
-        println!("[ADAPTIVE] Using flip rates for ordering variables");
+        println!("[ADAPTIVE] Strategy change: {}", strategy_name);
     }
     
     // Helper method to get a descriptive name for the current strategy
