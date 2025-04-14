@@ -54,7 +54,7 @@ pub fn calculate_and_print_flip_rates(aig_path: &Path, vectors: u32, seeds: u32)
     
     for (var_id, rate) in rates_for_printing {
         // Convert the rate to a percentage with 2 decimal places
-        let rate_percentage = (rate as f64) / 10.0;
+        let rate_percentage = (rate as f64);
         println!("{:<8} {:<12.2}", var_id, rate_percentage);
     }
     println!("=======================================\n");
@@ -98,7 +98,7 @@ impl FlipRateManager {
         
         for (var, rate) in rates_for_printing {
             // Convert the rate to a percentage with 2 decimal places
-            let rate_percentage = (rate as f64) / 10.0;
+            let rate_percentage = (rate as f64) ;
             println!("{:<8} {:<12.2}", var, rate_percentage);
         }
         println!("=======================================\n");
