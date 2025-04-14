@@ -29,6 +29,13 @@ fn main() {
         println!("the model to be checked: {}", options.model.display());
     }
     
+    // Print a visible confirmation if adaptive ordering is enabled
+    if options.ic3.adaptive_ordering {
+        println!("==========================================");
+        println!("ADAPTIVE ORDERING IS ENABLED FOR THIS RUN");
+        println!("==========================================");
+    }
+    
     // Check if we should only calculate and print flip rates
     if options.ic3.only_flip_rates {
         if !options.ic3.calculate_flip_rates {

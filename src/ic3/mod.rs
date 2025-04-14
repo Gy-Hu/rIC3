@@ -430,6 +430,12 @@ impl IC3 {
             self.last_reward_update = Instant::now();
         }
         
+        // Record the previous strategy
+        let old_topo = self.options.ic3.topo_sort;
+        let old_reverse = self.options.ic3.reverse_sort;
+        let old_flip_rate = self.options.ic3.flip_rate_sort;
+        let old_high_first = self.options.ic3.high_flip_rate_first;
+        
         // Select new strategy
         let strategy = mab.select();
         let (topo_sort, reverse_sort, flip_rate_sort, high_flip_rate_first) = strategy.to_options();
@@ -439,6 +445,57 @@ impl IC3 {
         self.options.ic3.reverse_sort = reverse_sort;
         self.options.ic3.flip_rate_sort = flip_rate_sort;
         self.options.ic3.high_flip_rate_first = high_flip_rate_first;
+        
+        // Only print when strategy changes
+        if old_topo != topo_sort || old_reverse != reverse_sort || 
+           old_flip_rate != flip_rate_sort || old_high_first != high_flip_rate_first {
+            // Print top 5 highest flip rates for context
+            if flip_rate_sort || high_flip_rate_first {
+                // Only show flip rates when they're being used for ordering
+                self.print_top_flip_rates(5);
+            }
+            
+            // Print strategy change in a concise format
+            let strategy_name = self.get_strategy_description(topo_sort, reverse_sort, flip_rate_sort, high_flip_rate_first);
+            println!("[ADAPTIVE] Strategy change: {}", strategy_name);
+        }
+    }
+    
+    // Helper method to print flip rate status
+    fn print_top_flip_rates(&self, _n: usize) {
+        if !self.flip_rate_manager.is_loaded() {
+            println!("[ADAPTIVE] No flip rate data loaded");
+            return;
+        }
+        
+        println!("[ADAPTIVE] Using flip rates for ordering variables");
+    }
+    
+    // Helper method to get a descriptive name for the current strategy
+    fn get_strategy_description(&self, topo: bool, reverse: bool, flip_rate: bool, high_first: bool) -> String {
+        let mut parts = Vec::new();
+        
+        if topo {
+            if reverse {
+                parts.push("Reverse Topo");
+            } else {
+                parts.push("Topo");
+            }
+        }
+        
+        if flip_rate {
+            if high_first {
+                parts.push("High Flip First");
+            } else {
+                parts.push("Low Flip First");
+            }
+        }
+        
+        if parts.is_empty() {
+            "Default".to_string()
+        } else {
+            parts.join(", ")
+        }
     }
 }
 
