@@ -18,7 +18,7 @@ use statistic::Statistic;
 use std::time::Instant;
 use std::path::Path;
 use flip_rate::FlipRateManager;
-use mab::{ContextualMAB, determine_phase};
+use mab::{ContextualMAB, SolverPhase, determine_phase};
 
 mod activity;
 mod frame;
@@ -50,7 +50,7 @@ pub struct IC3 {
     rng: StdRng,
     flip_rate_manager: FlipRateManager,
     
-    // Use Contextual MAB for adaptive ordering strategies
+    // Add contextual MAB for adaptive ordering strategies
     mab: Option<ContextualMAB>,
     last_reward_update: Instant,
     use_adaptive_ordering: bool,
@@ -65,7 +65,7 @@ impl IC3 {
     fn extend(&mut self) {
         if !self.options.ic3.no_pred_prop {
             self.bad_solver = cadical::Solver::new();
-            self.ts.load_trans(&mut self.bad_solver, true);
+            self.bad_ts.load_trans(&mut self.bad_solver, true);
         }
         let mut solver = Solver::new(self.options.clone(), Some(self.frame.len()), &self.ts);
         for v in self.auxiliary_var.iter() {
@@ -365,7 +365,7 @@ impl IC3 {
         bad_ts.constraint.push(!ts.bad);
         let ts = Grc::new(ts.ctx());
         let bad_ts = Grc::new(bad_ts.ctx());
-        let statistic = Statistic::new(options.model.to_str().unwrap_or(""));
+        let statistic = Statistic::new(options.model.to_str().unwrap());
         let activity = Activity::new(&ts);
         let frame = Frames::new(&ts);
         let lift = Solver::new(options.clone(), None, &ts);
@@ -379,53 +379,32 @@ impl IC3 {
         let mut flip_rate_manager = FlipRateManager::new();
         
         // Initialize MAB if adaptive ordering is enabled
-        let mab = if options.ic3.adaptive_ordering {
-            if options.ic3.flip_rate_file.is_some() || options.ic3.calculate_flip_rates {
-                // Ensure flip rates are loaded or calculated if required by a strategy
-                if let Some(ref path_str) = options.ic3.flip_rate_file {
-                    let path = Path::new(path_str);
-                    if let Err(e) = flip_rate_manager.load_from_file(path) {
-                        eprintln!("Warning: Failed to load flip rate file '{}': {}", path.display(), e);
-                        eprintln!("Adaptive ordering might not use flip rate strategies effectively.");
-                    }
-                } else if options.ic3.calculate_flip_rates {
-                     match options.model.extension().and_then(|s| s.to_str()) {
-                         Some("aig") | Some("aag") => {
-                            let aig_path = &options.model;
-                            // Use default values from options
-                            let vectors = options.ic3.flip_rate_vectors;
-                            let seeds = options.ic3.flip_rate_seeds;
-                            if let Err(e) = flip_rate_manager.calculate_from_model(aig_path, vectors, seeds) {
-                                eprintln!("Warning: Failed to calculate flip rates: {}", e);
-                                eprintln!("Adaptive ordering might not use flip rate strategies effectively.");
-                            }
-                         },
-                         _ => {
-                             eprintln!("Warning: Cannot calculate flip rates for non-AIG/AAG input. Provide a flip rate file or disable flip rate calculation.");
-                             eprintln!("Adaptive ordering might not use flip rate strategies effectively.");
-                         }
-                     }
-                }
-                
-                if !flip_rate_manager.is_loaded() && 
-                   (options.ic3.flip_rate_sort || options.ic3.high_flip_rate_first) {
-                    eprintln!("Warning: Flip rate sorting enabled but no flip rate data loaded/calculated.");
+        let use_adaptive_ordering = options.ic3.adaptive_ordering;
+        
+        // Calculate flip rates if adaptive ordering is enabled
+        if use_adaptive_ordering {
+            if let Some(aig_path) = options.model.clone().to_str() {
+                let path = Path::new(aig_path);
+                // Calculate flip rates with default parameters (1000 vectors, 5 seeds)
+                // These parameters can be adjusted based on model size
+                if let Err(e) = flip_rate_manager.calculate_from_model(path, 1000, 5) {
+                    println!("[ADAPTIVE] Warning: Failed to calculate flip rates: {}", e);
                 }
             }
-            println!("[ADAPTIVE] Initializing Contextual MAB for ordering strategies.");
+        }
+        
+        let mab = if use_adaptive_ordering {
             Some(ContextualMAB::new(
-                50,      // Window size
-                0.2,     // Initial exploration rate
-                0.995,   // Exploration decay
-                0.01     // Min exploration rate
+                20,             // window size
+                0.3,            // initial exploration rate
+                0.995,          // exploration decay rate
+                0.05,           // minimum exploration rate
             ))
         } else {
             None
         };
         
-        let use_adaptive_ordering = options.ic3.adaptive_ordering;
-
-        let mut ic3 = IC3 {
+        Self {
             options,
             ts,
             activity,
@@ -439,17 +418,14 @@ impl IC3 {
             frame,
             abs_cst,
             pre_lemmas,
-            auxiliary_var: vec![],
+            auxiliary_var: Vec::new(),
+            bmc_solver: None,
             rng,
             flip_rate_manager,
-            bmc_solver: None,
             mab,
-            last_reward_update: Instant::now(), // Initialize reward update timer
+            last_reward_update: Instant::now(),
             use_adaptive_ordering,
-        };
-        let _ = Instant::now();
-        ic3.extend();
-        ic3
+        }
     }
     
     // Function to update ordering strategy based on Contextual MAB
@@ -457,42 +433,38 @@ impl IC3 {
         if !self.use_adaptive_ordering || self.mab.is_none() {
             return;
         }
-
+        
         let mab = self.mab.as_mut().unwrap();
-        let current_phase = determine_phase(&self.statistic, self.frame.len());
-
-        // Calculate reward for the previous strategy *for its context* if enough time has passed
-        // Note: This assumes the context hasn't changed drastically since the last selection.
-        // A more sophisticated approach might track the context *when* the strategy was selected.
+        
+        // Determine current solving phase (context)
+        let phase = determine_phase(&self.statistic, self.frame.len());
+        
+        // Calculate reward for the previous strategy if enough time has passed
         if self.last_reward_update.elapsed().as_secs() >= 1 {
-            // Use the current phase as the context for the reward update.
-            // This is a slight simplification, assuming the phase is representative of the period.
-            let reward = mab.calculate_reward(&self.statistic, current_phase);
-            mab.update(reward, current_phase); // Pass the context to update
+            let reward = mab.calculate_reward(&self.statistic, phase);
+            // Pass current statistics to update for better model training
+            mab.update(reward, &self.statistic);
             self.last_reward_update = Instant::now();
-            
-            // Optional: Print reward update details
-            // if self.options.verbose > 1 {
-            //     println!("[ADAPTIVE] Updated reward for phase {:?}, last strategy: {:?}, reward: {:.4f}, new epsilon: {:.4f}", 
-            //         current_phase, mab.last_selected, reward, mab.exploration_rate);
-            // }
         }
-
-        // Record the previous strategy settings
+        
+        // Record the previous strategy
         let old_topo = self.options.ic3.topo_sort;
         let old_reverse = self.options.ic3.reverse_sort;
         let old_flip_rate = self.options.ic3.flip_rate_sort;
         let old_high_first = self.options.ic3.high_flip_rate_first;
-
-        // Select new strategy based on the current context (phase)
-        let strategy = mab.select(current_phase); // Pass the context to select
+        
+        // Select new strategy based on current context (phase and statistics)
+        let strategy = mab.select(phase, &self.statistic);
         let (topo_sort, reverse_sort, flip_rate_sort, high_flip_rate_first) = strategy.to_options();
-
+        
         // Update options
         self.options.ic3.topo_sort = topo_sort;
         self.options.ic3.reverse_sort = reverse_sort;
         self.options.ic3.flip_rate_sort = flip_rate_sort;
         self.options.ic3.high_flip_rate_first = high_flip_rate_first;
+        
+        // We need to drop the mutable borrow before calling other methods
+        std::mem::drop(mab);
         
         // Only print when strategy changes
         if old_topo != topo_sort || old_reverse != reverse_sort || 
@@ -504,9 +476,22 @@ impl IC3 {
             // Check if this is a flip-rate based strategy
             if flip_rate_sort || high_flip_rate_first {
                 // Only show flip rates when they're being used for ordering
-                self.print_flip_rate_strategy(strategy_name.clone());
+                self.print_flip_rate_strategy(strategy_name);
+            } else {
+                println!("[ADAPTIVE] Phase: {:?}, Strategy change: {}", phase, strategy_name);
             }
-            println!("[ADAPTIVE] Strategy change in phase {:?}: {}", current_phase, strategy_name);
+            
+            // Periodically print contextual MAB statistics (every 10 updates)
+            static mut PRINT_COUNTER: usize = 0;
+            unsafe {
+                PRINT_COUNTER += 1;
+                if PRINT_COUNTER % 10 == 0 && self.mab.is_some() {
+                    // Get a fresh borrow for printing stats
+                    if let Some(mab) = self.mab.as_mut() {
+                        mab.print_contextual_stats();
+                    }
+                }
+            }
         }
     }
     
@@ -551,98 +536,57 @@ impl IC3 {
 
 impl Engine for IC3 {
     fn check(&mut self) -> Option<bool> {
-        // Use incremental approach by default
-        let use_incremental_approach = true;
-        if !use_incremental_approach {
+        if !self.base() {
+            return Some(false);
+        }
+        loop {
+            // Update ordering strategy before blocking
+            self.update_ordering_strategy();
+            
             let start = Instant::now();
-            let mut last_print = Instant::now();
             loop {
-                if self.options.ic3.adaptive_ordering {
-                    self.update_ordering_strategy(); // Update strategy periodically
-                }
-                if self.options.verbose > 1 {
-                    if last_print.elapsed().as_secs() >= 3 {
-                        println!(
-                            "[{}:{}] frame: {}, time: {:?}",
-                            file!(),
-                            line!(),
-                            self.level(),
-                            start.elapsed(),
-                        );
-                        last_print = Instant::now();
+                match self.block() {
+                    Some(false) => {
+                        self.statistic.overall_block_time += start.elapsed();
+                        return Some(false);
                     }
-                }
-                if let Some(res) = self.get_bad() {
-                    // No num_block_bad field, just increment general stats
-                    self.statistic.num_get_bad += 1;
-                    if self.options.verbose > 1 {
-                        println!("[{}:{}] bad: {:?}", file!(), line!(), res);
+                    None => {
+                        self.statistic.overall_block_time += start.elapsed();
+                        self.verify();
+                        return Some(true);
                     }
-                    return Some(false);
+                    _ => (),
                 }
-                if self.propagate(None) {
-                    self.verify();
-                    return Some(true);
+                if let Some((bad, inputs)) = self.get_bad() {
+                    let bad = Lemma::new(bad);
+                    self.add_obligation(ProofObligation::new(self.level(), bad, inputs, 0, None))
+                } else {
+                    break;
                 }
             }
-        } else {
+            let blocked_time = start.elapsed();
+            if self.options.verbose > 1 {
+                self.frame.statistic();
+                println!(
+                    "[{}:{}] frame: {}, time: {:?}",
+                    file!(),
+                    line!(),
+                    self.level(),
+                    blocked_time,
+                );
+            }
+            self.statistic.overall_block_time += blocked_time;
+            self.extend();
+            
+            // Update ordering strategy before propagation
+            self.update_ordering_strategy();
+            
             let start = Instant::now();
-            loop {
-                if self.options.ic3.adaptive_ordering {
-                    self.update_ordering_strategy(); // Update strategy periodically
-                }
-                if let Some(res) = self.get_bad() {
-                    // No num_block_bad field, just increment general stats
-                    self.statistic.num_get_bad += 1;
-                    if self.options.verbose > 1 {
-                        println!("[{}:{}] bad: {:?}", file!(), line!(), res);
-                    }
-                    return Some(false);
-                }
-                loop {
-                    match self.block() {
-                        Some(false) => {
-                            self.statistic.overall_block_time += start.elapsed();
-                            return Some(false);
-                        }
-                        None => {
-                            self.statistic.overall_block_time += start.elapsed();
-                            self.verify();
-                            return Some(true);
-                        }
-                        _ => (),
-                    }
-                    if let Some((bad, inputs)) = self.get_bad() {
-                        let bad = Lemma::new(bad);
-                        self.add_obligation(ProofObligation::new(self.level(), bad, inputs, 0, None))
-                    } else {
-                        break;
-                    }
-                }
-                let blocked_time = start.elapsed();
-                if self.options.verbose > 1 {
-                    self.frame.statistic();
-                    println!(
-                        "[{}:{}] frame: {}, time: {:?}",
-                        file!(),
-                        line!(),
-                        self.level(),
-                        blocked_time,
-                    );
-                }
-                self.statistic.overall_block_time += blocked_time;
-                self.extend();
-                
-                // Update ordering strategy before propagation
-                self.update_ordering_strategy();
-                
-                let start = Instant::now();
-                let propagate = self.propagate(None);
-                self.statistic.overall_propagate_time += start.elapsed();
-                if propagate {
-                    self.verify();
-                    return Some(true);
-                }
+            let propagate = self.propagate(None);
+            self.statistic.overall_propagate_time += start.elapsed();
+            if propagate {
+                self.verify();
+                return Some(true);
             }
         }
     }
