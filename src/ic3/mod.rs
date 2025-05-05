@@ -99,15 +99,31 @@ impl IC3 {
         (self.level() + 1, cube)
     }
 
-    fn generalize(&mut self, mut po: ProofObligation, mic_type: MicType) -> bool {
+    fn generalize(&mut self, mut po: ProofObligation, mic_type: MicType) -> Option<Vec<LitVec>> {
         if self.options.ic3.inn && self.ts.cube_subsume_init(&po.lemma) {
             po.frame += 1;
             self.add_obligation(po.clone());
-            return self.add_lemma(po.frame - 1, po.lemma.cube().clone(), false, Some(po));
+            let cube_clone = po.lemma.cube().clone();
+            let added_lemma = self.add_lemma(po.frame - 1, cube_clone.clone(), false, Some(po.clone()));
+            return Some(vec![cube_clone]); // Return the lemma we added
         }
         
-        // Capture the initial CTI from the blocking check
+        // Capture the initial CTI from the initial blocking check
         let initial_generalized_cti = self.solvers[po.frame - 1].inductive_core();
+        
+        // Critical Check 1: Validate Initial CTI
+        if po.frame > 0 && !self.options.ic3.inn && self.ts.cube_subsume_init(&initial_generalized_cti) {
+            // The only reason this block failed must involve the initial state.
+            // Generalization based on this CTI at this frame is invalid.
+            // Signal failure to the caller (block function).
+            if self.options.verbose > 1 {
+                eprintln!("Warning: Initial CTI for frame {} hits init state. Aborting generalization for this PO.", po.frame);
+            }
+            return None; // Indicate generalization failed for this PO at this step
+        }
+        
+        // Proceed with MIC generation only if the base CTI is valid for this frame.
+        let base_cti_for_mic = initial_generalized_cti; // Use the validated CTI
         
         // Prepare for Multi-MIC
         let mut generated_mics: Vec<LitVec> = Vec::new();
@@ -123,15 +139,14 @@ impl IC3 {
             // Call the new refinement function for each ordering
             let mic_for_this_ordering = self.refine_mic_with_ordering(
                 po.frame,
-                initial_generalized_cti.clone(), // Start from the same base CTI
+                base_cti_for_mic.clone(), // Use the validated CTI
                 ordering,
                 &[], // Empty constraints during generalize
                 mic_type, // Pass MIC parameters (ctg settings etc.)
             );
             
-            // Check if the generated MIC is valid/useful before adding
-            if !mic_for_this_ordering.is_empty() && 
-               !(self.options.ic3.inn && self.ts.cube_subsume_init(&mic_for_this_ordering)) {
+            // Temporarily add all non-empty results. Validation happens later.
+            if !mic_for_this_ordering.is_empty() {
                 generated_mics.push(mic_for_this_ordering);
             }
         }
@@ -140,35 +155,59 @@ impl IC3 {
         generated_mics.sort();
         generated_mics.dedup();
         
-        let mut invariant_found = false;
-        for mic_cube in generated_mics {
-            // Apply the existing push logic to potentially lift the frame
-            let (pushed_frame, pushed_mic) = self.push_lemma(po.frame, mic_cube);
-            
-            // Update PO frame for next lemma
-            po.push_to(pushed_frame);
-            self.add_obligation(po.clone());
-            
-            // Reuse the existing add_lemma logic
-            if self.add_lemma(pushed_frame - 1, pushed_mic.clone(), false, Some(po.clone())) {
-                invariant_found = true;
-                // We could break here if we want to stop once invariant is found
-                // but we'll continue to add all generated MICs for potential better convergence
-            }
-            
-            // Update statistics
-            self.statistic.avg_po_cube_len += po.lemma.len();
+        // Filter out invalid MICs (those that subsume init state)
+        let valid_mics: Vec<LitVec> = generated_mics
+            .into_iter()
+            .filter(|mic_cube| {
+                // Skip MICs that subsume init state (unless allowed by inn)
+                if po.frame > 0 && !self.options.ic3.inn && self.ts.cube_subsume_init(mic_cube) {
+                    if self.options.verbose > 2 {
+                        eprintln!("Warning: Skipping init-subsuming MIC generated for frame {}: {:?}", po.frame, mic_cube);
+                    }
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+        
+        // Update statistics even if we're not adding lemmas immediately
+        for mic_cube in &valid_mics {
+            self.statistic.avg_po_cube_len += mic_cube.len();
         }
         
-        // If invariant was found by any MIC, return true
-        invariant_found
+        // Return the valid MICs for the block function to process
+        Some(valid_mics)
     }
 
     fn block(&mut self) -> Option<bool> {
         while let Some(mut po) = self.obligations.pop(self.level()) {
-            if po.removed {
-                continue;
+            if po.removed { continue; }
+
+            // =========================================================
+            // === PRIORITY 1: Check for Frame 0 / Immediate CEX ===
+            // =========================================================
+            if po.frame == 0 {
+                if self.ts.cube_subsume_init(&po.lemma) {
+                    // Frame 0 CEX detected. UNSAFE.
+                    self.add_obligation(po); // Re-add for witness trace
+                    return Some(false);      // UNSAFE
+                } else {
+                    // Unexpected state: Frame 0 PO that doesn't hit init.
+                    // This shouldn't normally happen via get_bad.
+                    // Treat as an error or potential UNSAFE path.
+                    eprintln!("Critical Error: Frame 0 PO {:?} does not hit init state!", po);
+                    self.add_obligation(po); // Re-add
+                    return Some(false);      // Report UNSAFE conservatively
+                }
             }
+            
+            // =========================================================
+            // === Frame > 0 Processing ==============================
+            // =========================================================
+            assert!(po.frame > 0); // Logic below assumes frame > 0
+            
+            // Handle INN and abs_cst cases for frames > 0
             if self.ts.cube_subsume_init(&po.lemma) {
                 if self.options.ic3.abs_cst {
                     self.add_obligation(po.clone());
@@ -190,27 +229,40 @@ impl IC3 {
                     } else {
                         return Some(false);
                     }
-                } else if self.options.ic3.inn && po.frame > 0 {
+                } else if self.options.ic3.inn {
                     assert!(!self.solvers[0].solve(&po.lemma, vec![]));
                 } else {
-                    self.add_obligation(po.clone());
-                    assert!(po.frame == 0);
+                    // This case shouldn't be reached with the above frame 0 check
+                    assert!(false, "Unexpected: frame > 0 & !inn & hits init");
                     return Some(false);
                 }
             }
+
+            // Check 2: Trivial Containment
             if let Some((bf, _)) = self.frame.trivial_contained(po.frame, &po.lemma) {
+                // PO is subsumed by a lemma in a higher frame 'bf'.
+                // Push the obligation beyond that frame.
                 po.push_to(bf + 1);
                 self.add_obligation(po);
-                continue;
+                continue; // Process the next obligation
             }
+
+            // Prepare for blocking check
             if self.options.verbose > 2 {
                 self.frame.statistic();
             }
             po.bump_act();
+            
+            // Check 3: Blocked Check
             let blocked_start = Instant::now();
             let blocked = self.blocked_with_ordered(po.frame, &po.lemma, false, false);
             self.statistic.block_blocked_time += blocked_start.elapsed();
+
+            let mut invariant_found_during_generalization = false;
+            let mut requires_predecessor = !blocked; // Default assumption
+
             if blocked {
+                // State `po` is blocked. Attempt Generalization.
                 let mic_type = if self.options.ic3.dynamic {
                     if let Some(mut n) = po.next.as_mut() {
                         let mut act = n.act;
@@ -245,22 +297,95 @@ impl IC3 {
                 } else {
                     MicType::from_options(&self.options)
                 };
-                if self.generalize(po, mic_type) {
-                    return None;
+                
+                // Attempt generalization with the appropriate mic_type
+                match self.generalize(po.clone(), mic_type) {
+                    Some(valid_mics) => {
+                        // Generalization ran and produced valid MICs (list might be empty)
+                        if !valid_mics.is_empty() {
+                            if self.options.verbose > 1 {
+                                eprintln!("Note: Adding {} MIC(s) for PO at frame {}", valid_mics.len(), po.frame);
+                            }
+                            // Add the valid MICs
+                            for mic_cube in valid_mics {
+                                let (pushed_frame, pushed_mic) = self.push_lemma(po.frame, mic_cube);
+                                
+                                // Update PO frame for next lemma
+                                let mut po_clone = po.clone();
+                                po_clone.push_to(pushed_frame);
+                                self.add_obligation(po_clone);
+                                
+                                if self.add_lemma(pushed_frame - 1, pushed_mic.clone(), false, Some(po.clone())) {
+                                    // Found the invariant!
+                                    invariant_found_during_generalization = true;
+                                    // We can break the MIC adding loop, but must finish processing this PO.
+                                    break;
+                                }
+                            }
+                        } else {
+                            // Generalize ran but produced no valid MICs.
+                            if self.options.verbose > 1 {
+                                eprintln!("Note: Generalization for PO at frame {} produced no valid MICs.", po.frame);
+                            }
+                        }
+                        // Decide if predecessor is still needed:
+                        // If invariant was found, no predecessor needed for this PO.
+                        // Otherwise, ALWAYS generate predecessor to ensure CEX path exploration.
+                        requires_predecessor = !invariant_found_during_generalization;
+                    }
+                    None => {
+                        // Generalize failed early (initial CTI invalid). Predecessor required.
+                        if self.options.verbose > 1 {
+                            eprintln!("Note: Generalization failed early for PO at frame {}, requires predecessor.", po.frame);
+                        }
+                        requires_predecessor = true;
+                    }
                 }
+            }
+
+            // If invariant was found above, the main loop termination condition (empty queue + propagate)
+            // will eventually lead to SAFE. We don't need to do more with *this* `po`.
+            if invariant_found_during_generalization {
+                return None; // Exit to outer loop for invariant check
+            }
+
+            // Action: Predecessor Generation OR Re-add original PO
+            if requires_predecessor {
+                if self.options.verbose > 1 && blocked { // Log only if fallback after block
+                    eprintln!("Note: Falling back to predecessor for blocked PO at frame {}", po.frame);
+                }
+                // Generate predecessor CTI
+                let (pred_cti_lemma, inputs) = self.get_pred(po.frame, true);
+                let pred_po = ProofObligation::new(
+                    po.frame - 1,        // Predecessor is at frame F-1
+                    Lemma::new(pred_cti_lemma),
+                    vec![inputs],        // Capture input assignments for witness
+                    po.depth + 1,        // Increment CEX depth
+                    Some(po.clone()),    // Link back to original PO
+                );
+                self.add_obligation(pred_po); // Add the new predecessor task
+
+                // Re-add the original obligation `po`. It must wait until its predecessor
+                // is processed and hopefully blocked/generalized.
+                self.add_obligation(po);
             } else {
-                let (model, inputs) = self.get_pred(po.frame, true);
-                self.add_obligation(ProofObligation::new(
-                    po.frame - 1,
-                    Lemma::new(model),
-                    vec![inputs],
-                    po.depth + 1,
-                    Some(po.clone()),
-                ));
+                // This case should not be reached if invariant wasn't found.
+                debug_assert!(false, "Invalid control flow state in block function");
+                // If we get here, something went wrong - but we'll recover by generating a predecessor anyway
+                if self.options.verbose > 1 {
+                    eprintln!("Warning: Unexpected control flow in block function, generating predecessor anyway.");
+                }
+                let (pred_cti_lemma, inputs) = self.get_pred(po.frame, true);
+                let pred_po = ProofObligation::new(
+                    po.frame - 1, Lemma::new(pred_cti_lemma), vec![inputs], po.depth + 1, Some(po.clone()),
+                );
+                self.add_obligation(pred_po);
                 self.add_obligation(po);
             }
-        }
-        Some(true)
+        } // End while loop
+
+        // If loop finishes, obligation queue is empty.
+        Some(true) // Report SAFE (pending propagation check for invariant)
     }
 
     #[allow(unused)]

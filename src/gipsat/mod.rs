@@ -317,23 +317,6 @@ impl Solver {
                 ans.push(self.ts.prev(*l));
             }
         }
-        if self.ts.cube_subsume_init(&ans) {
-            ans = LitVec::new();
-            let new = self
-                .assump
-                .iter()
-                .find(|l| {
-                    let l = self.ts.prev(**l);
-                    self.ts.init_map[l.var()].is_some_and(|i| i != l.polarity())
-                })
-                .unwrap();
-            for l in self.assump.iter() {
-                if self.unsat_has(*l) || l.eq(new) {
-                    ans.push(self.ts.prev(*l));
-                }
-            }
-            assert!(!self.ts.cube_subsume_init(&ans));
-        }
         ans
     }
 

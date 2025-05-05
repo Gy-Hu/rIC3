@@ -276,6 +276,19 @@ impl IC3 {
                     // Get the core explaining *why* it's still blocked.
                     let new_core = self.solvers[frame - 1].inductive_core();
 
+                    // Check if this refinement core hits initial state
+                    if frame > 0 && self.ts.cube_subsume_init(&new_core) {
+                        // If the core from the refinement check hits the initial state,
+                        // it means removing `lit_to_try_removing` was invalid because
+                        // the resulting `removed_cube` leads back to the initial state.
+                        // We should *not* update `current_cube` with this core.
+                        // Instead, we must keep `lit_to_try_removing`.
+                        keep.insert(lit_to_try_removing);
+                        self.statistic.mic_drop.fail(); // Or a specific counter
+                        i += 1;
+                        continue; // Continue to the next literal in the current_cube
+                    }
+
                     // Update current_cube based on the intersection with the new core
                     // (This is a common MIC refinement step)
                     let original_len = current_cube.len();
