@@ -164,6 +164,10 @@ impl ProofObligationQueue {
     }
 
     pub fn add(&mut self, po: ProofObligation) {
+        if self.obligations.contains(&po) {
+            return;
+        }
+
         if self.num.len() <= po.frame {
             self.num.resize(po.frame + 1, 0);
         }
