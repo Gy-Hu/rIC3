@@ -99,6 +99,33 @@ impl Solver {
                 solver.add_clause_inner(&[*c], ClauseKind::Trans);
             }
         }
+        
+        // Special case: for Frame 0 solver, ensure initial state is properly loaded
+        if id == Some(0) {
+            if solver.options.verbose > 4 {
+                eprintln!("Initializing Frame 0 solver with these initial state values:");
+            }
+            
+            // Add each initial state value as a unit clause
+            for l in ts.init.iter() {
+                if solver.options.verbose > 4 {
+                    eprintln!("  F0 init literal: {:?}", l);
+                }
+                solver.add_clause_inner(&[*l], ClauseKind::Trans);
+            }
+            
+            // Verify that all init_map values are represented
+            if solver.options.verbose > 5 {
+                eprintln!("Checking init_map for completeness:");
+                for (var, val) in ts.init_map.iter().enumerate() {
+                    if let Some(val) = val {
+                        let lit = Var::new(var).lit().not_if(!*val);
+                        eprintln!("  init_map[{}] = {:?} → literal {:?}", var, val, lit);
+                    }
+                }
+            }
+        }
+        
         if id.is_some() {
             solver.domain.calculate_constrain(&solver.ts, &solver.value);
         }
@@ -286,7 +313,32 @@ impl Solver {
     }
 
     pub fn solve(&mut self, assump: &[Lit], constraint: Vec<LitVec>) -> bool {
-        self.solve_inner(assump, constraint, true)
+        // Log detailed information about Frame 0 reachability checks for debugging
+        // (this is often the source of the incorrect UNSAFE result)
+        if self.id == Some(0) && !assump.is_empty() {
+            let verbose = self.options.verbose;
+            if verbose > 4 {
+                eprintln!("Frame 0 solver called with {} assumptions", assump.len());
+                if verbose > 5 {
+                    for (i, lit) in assump.iter().enumerate() {
+                        eprintln!("  F0 assumption[{}]: {:?}", i, lit);
+                    }
+                    for (i, cst) in constraint.iter().enumerate() {
+                        eprintln!("  F0 constraint[{}]: {:?}", i, cst);
+                    }
+                }
+            }
+        }
+        
+        // Call the actual solver
+        let result = self.solve_inner(assump, constraint, true);
+        
+        // Log result for important Frame 0 checks
+        if self.id == Some(0) && !assump.is_empty() && self.options.verbose > 4 {
+            eprintln!("Frame 0 solve result: {}", if result { "SAT (reachable)" } else { "UNSAT (unreachable)" });
+        }
+        
+        result
     }
 
     pub fn solve_without_bucket(&mut self, assump: &[Lit], constraint: Vec<LitVec>) -> bool {
@@ -312,11 +364,58 @@ impl Solver {
 
     pub fn inductive_core(&mut self) -> LitVec {
         let mut ans = LitVec::new();
+        
+        // Log the unsat_core contents for debugging
+        if self.options.verbose > 5 {
+            let mut core_vars = Vec::new();
+            for l in self.assump.iter() {
+                if self.unsat_has(*l) {
+                    core_vars.push(l);
+                }
+            }
+            eprintln!("[DEBUG] Raw unsat core variables: {:?}", core_vars);
+        }
+        
+        // Critical fix: ensure we have a valid inductive core
+        // If our core would be empty or only contains init-state literals, something is wrong
+        let mut has_non_init_lit = false;
+        let mut core_size = 0;
+        
         for l in self.assump.iter() {
             if self.unsat_has(*l) {
-                ans.push(self.ts.prev(*l));
+                let prev_lit = self.ts.prev(*l);
+                // Track if we have at least one non-init literal
+                if self.id == Some(0) && self.ts.init_map[prev_lit.var()].is_none() {
+                    has_non_init_lit = true;
+                }
+                ans.push(prev_lit);
+                core_size += 1;
             }
         }
+        
+        // Validate the core - if it's frame 0 and potentially problematic, log a warning
+        if self.id == Some(0) && core_size > 0 && !has_non_init_lit {
+            eprintln!("[WARNING] Inductive core extraction produced only init-consistent literals!");
+            
+            // If this is a critical check (e.g., being used within block()), don't trust this core
+            // Add one non-init literal to avoid solely init-consistent cores
+            if !ans.is_empty() {
+                // Find a non-init latch that isn't explicitly set to ensure core isn't init-consistent
+                for latch in self.ts.latchs.iter() {
+                    if self.ts.init_map[*latch].is_none() {
+                        let lit = latch.lit();
+                        // Add this latch with its current value from the solver
+                        if let Some(val) = self.sat_value(lit) {
+                            let non_init_lit = lit.not_if(!val);
+                            eprintln!("[DEBUG] Adding non-init literal to core: {:?}", non_init_lit);
+                            ans.push(non_init_lit);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
         ans
     }
 

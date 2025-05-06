@@ -76,6 +76,7 @@ impl IC3 {
         let mut cls: LitVec = solver.get_last_assump().clone();
         cls.extend_from_slice(&self.abs_cst);
         if cls.is_empty() {
+            self.statistic.block_get_predecessor_time += start.elapsed();
             return (LitVec::new(), LitVec::new());
         }
         let in_cls: GHashSet<Var> = GHashSet::from_iter(cls.iter().map(|l| l.var()));
@@ -88,17 +89,18 @@ impl IC3 {
             }
         }
         self.lift.set_domain(cls.iter().cloned());
-        let mut latchs = LitVec::new();
+        let mut initial_latchs = LitVec::new();
         for latch in self.ts.latchs.iter() {
             let lit = latch.lit();
             if self.lift.domain.has(lit.var()) {
                 if let Some(v) = solver.sat_value(lit) {
                     if in_cls.contains(latch) || !solver.flip_to_none(*latch) {
-                        latchs.push(lit.not_if(!v));
+                        initial_latchs.push(lit.not_if(!v));
                     }
                 }
             }
         }
+        let mut latchs = initial_latchs.clone();
         let inn: Box<dyn FnMut(&mut LitVec)> = Box::new(|cube: &mut LitVec| {
             cube.sort();
             cube.reverse();
@@ -124,7 +126,29 @@ impl IC3 {
                 latchs.shuffle(&mut self.rng);
             }
             let olen = latchs.len();
-            latchs = self.lift.minimal_pred(&inputs, &latchs, &cls).unwrap();
+            
+            // *** DEBUG LOGGING ***
+            if self.options.verbose > 4 {
+                eprintln!("[DEBUG] lift.minimal_pred called in get_pred(frame={})", frame);
+                eprintln!("[DEBUG]   Inputs: {:?}", inputs);
+                eprintln!("[DEBUG]   Latchs (count: {}): {:?}", latchs.len(), latchs);
+                eprintln!("[DEBUG]   Cls: {:?}", cls);
+            }
+            
+            match self.lift.minimal_pred(&inputs, &latchs, &cls) {
+                Some(minimized_latchs) => {
+                    latchs = minimized_latchs;
+                }
+                None => {
+                    if self.options.verbose > 1 {
+                        eprintln!(
+                            "Warning: Predecessor minimization failed (lift solver SAT) in get_pred frame {}. Using current latch set.",
+                            frame
+                        );
+                    }
+                    break;
+                }
+            }
             if latchs.len() == olen || !strengthen {
                 break;
             }

@@ -114,12 +114,17 @@ impl TransysCtx {
 
     #[inline]
     pub fn cube_subsume_init(&self, x: &[Lit]) -> bool {
+        // This function checks if a cube of literals is consistent with the initial state
+        // Returns true if all literals in x are consistent with the initial state definition
         for x in x {
+            // If this latch has an initial value defined
             if let Some(init) = self.init_map[x.var()] {
+                // Return false if the literal's polarity doesn't match the init value
                 if init != x.polarity() {
                     return false;
                 }
             }
+            // For latches with no initial value defined (don't care), we allow any polarity
         }
         true
     }

@@ -112,12 +112,37 @@ impl IC3 {
         let initial_generalized_cti = self.solvers[po.frame - 1].inductive_core();
         
         // Critical Check 1: Validate Initial CTI
-        if po.frame > 0 && !self.options.ic3.inn && self.ts.cube_subsume_init(&initial_generalized_cti) {
+        let cti_hits_init = po.frame > 0 && !self.options.ic3.inn && self.ts.cube_subsume_init(&initial_generalized_cti);
+        
+        // Additional validation to avoid false positives
+        let mut unreliable_cti = false;
+        if cti_hits_init || initial_generalized_cti.is_empty() {
+            // The CTI is suspicious - it's either empty or only involves init-state variables
+            unreliable_cti = true;
+            
+            if self.options.verbose > 1 {
+                eprintln!("[WARNING] Suspicious CTI for frame {} - hits_init: {}, len: {}", 
+                         po.frame, cti_hits_init, initial_generalized_cti.len());
+                
+                // Log each literal in the CTI and how it relates to init_map
+                if self.options.verbose > 3 {
+                    eprintln!("[DEBUG] CTI literals vs init_map:");
+                    for lit in &initial_generalized_cti {
+                        let init_val = self.ts.init_map[lit.var()];
+                        eprintln!("[DEBUG]   Lit: {:?}, Init: {:?}, Match: {}", 
+                                 lit, init_val, 
+                                 init_val.map(|v| v == lit.polarity()).unwrap_or(false));
+                    }
+                }
+            }
+        }
+        
+        if unreliable_cti {
             // The only reason this block failed must involve the initial state.
             // Generalization based on this CTI at this frame is invalid.
             // Signal failure to the caller (block function).
             if self.options.verbose > 1 {
-                eprintln!("Warning: Initial CTI for frame {} hits init state. Aborting generalization for this PO.", po.frame);
+                eprintln!("Warning: Initial CTI for frame {} is unreliable. Aborting generalization for this PO.", po.frame);
             }
             return None; // Indicate generalization failed for this PO at this step
         }
@@ -184,12 +209,61 @@ impl IC3 {
         while let Some(mut po) = self.obligations.pop(self.level()) {
             if po.removed { continue; }
 
+            // Log the current proof obligation for debugging
+            if self.options.verbose > 3 {
+                eprintln!("Examining PO: Frame={}, Lemma={:?}, Depth={}", 
+                          po.frame, po.lemma, po.depth);
+            }
+
             // =========================================================
             // === PRIORITY 1: Check for Frame 0 / Immediate CEX ===
             // =========================================================
             if po.frame == 0 {
-                if self.ts.cube_subsume_init(&po.lemma) {
-                    // Frame 0 CEX detected. UNSAFE.
+                // *** DEBUG LOGGING ***
+                eprintln!("[DEBUG] Checking Frame 0 PO Lemma: {:?}", po.lemma);
+                let init_check = self.ts.cube_subsume_init(&po.lemma);
+                eprintln!("[DEBUG] Result of cube_subsume_init: {}", init_check);
+                // Log each latch's init value vs. lemma value
+                if self.options.verbose > 4 {
+                    eprintln!("[DEBUG] Detailed latch-by-latch consistency check:");
+                    for lit in po.lemma.iter() {
+                        let var = lit.var();
+                        let polarity = lit.polarity();
+                        let init_val = self.ts.init_map[var];
+                        eprintln!("[DEBUG]   Latch {:?} - Lemma polarity: {}, Init value: {:?}", 
+                                 var, polarity, init_val);
+                    }
+                }
+                
+                if init_check {
+                    // Extra validation: check if this is likely a false positive
+                    // Count how many literals match their initial values vs. how many don't
+                    if self.options.verbose > 3 {
+                        let mut init_matches = 0;
+                        let mut init_mismatches = 0;
+                        let mut non_init_lits = 0;
+                        
+                        for lit in po.lemma.iter() {
+                            match self.ts.init_map[lit.var()] {
+                                Some(init_val) if init_val == lit.polarity() => init_matches += 1,
+                                Some(_) => init_mismatches += 1, // Shouldn't happen with init_check=true
+                                None => non_init_lits += 1,
+                            }
+                        }
+                        
+                        eprintln!("[DEBUG] F0 PO validation - init matches: {}, mismatches: {}, non-init: {}", 
+                                 init_matches, init_mismatches, non_init_lits);
+                                 
+                        // If suspiciously few init matches, this may be a false positive
+                        if init_matches < 3 && po.lemma.len() > 10 {
+                            eprintln!("[WARNING] Suspicious F0 PO with very few init literals compared to size");
+                        }
+                    }
+                    
+                    // If we got here, Frame 0 CEX detected. UNSAFE.
+                    if self.options.verbose > 2 {
+                        eprintln!("Path 1: Frame 0 PO hits init state. UNSAFE.");
+                    }
                     self.add_obligation(po); // Re-add for witness trace
                     return Some(false);      // UNSAFE
                 } else {
@@ -197,6 +271,9 @@ impl IC3 {
                     // This shouldn't normally happen via get_bad.
                     // Treat as an error or potential UNSAFE path.
                     eprintln!("Critical Error: Frame 0 PO {:?} does not hit init state!", po);
+                    if self.options.verbose > 1 {
+                        eprintln!("Path 2: Frame 0 PO does not hit init state. Failing conservatively.");
+                    }
                     self.add_obligation(po); // Re-add
                     return Some(false);      // Report UNSAFE conservatively
                 }
@@ -207,9 +284,38 @@ impl IC3 {
             // =========================================================
             assert!(po.frame > 0); // Logic below assumes frame > 0
             
-            // Handle INN and abs_cst cases for frames > 0
-            if self.ts.cube_subsume_init(&po.lemma) {
+            // Pre-calculate blocked status based on transition relation
+            // We might override this later if the init check dictates it
+            let blocked_start = Instant::now();
+            let mut blocked = self.blocked_with_ordered(po.frame, &po.lemma, false, false);
+            self.statistic.block_blocked_time += blocked_start.elapsed();
+            
+            // *** DEBUG LOGGING ***
+            if blocked {
+                let core_debug = self.solvers[po.frame - 1].inductive_core();
+                eprintln!("[DEBUG] Blocked PO at frame {}: {:?}", po.frame, po);
+                eprintln!("[DEBUG] Inductive Core: {:?}", core_debug);
+                // Check if the core is init-consistent
+                let core_init_consistent = self.ts.cube_subsume_init(&core_debug);
+                eprintln!("[DEBUG] Core is init-consistent: {} (length: {})", 
+                          core_init_consistent, core_debug.len());
+            }
+
+            // Default assumption, might be overridden
+            let mut requires_predecessor = !blocked;
+            let mut invariant_found_during_generalization = false;
+
+            // --- Handle Init State Consistency and Reachability Check ---
+            let is_init_consistent = self.ts.cube_subsume_init(&po.lemma);
+            if self.options.verbose > 3 {
+                eprintln!("PO at frame {} is init-consistent: {}", po.frame, is_init_consistent);
+            }
+
+            if is_init_consistent {
                 if self.options.ic3.abs_cst {
+                    if self.options.verbose > 3 {
+                        eprintln!("Path 3: Init-consistent PO with abs_cst option.");
+                    }
                     self.add_obligation(po.clone());
                     if let Some(c) = self.check_witness_by_bmc(po.clone()) {
                         for c in c {
@@ -227,42 +333,80 @@ impl IC3 {
                         }
                         continue;
                     } else {
+                        if self.options.verbose > 2 {
+                            eprintln!("Path 4: BMC witness check confirmed CEX. UNSAFE.");
+                        }
                         return Some(false);
                     }
                 } else if self.options.ic3.inn {
-                    assert!(!self.solvers[0].solve(&po.lemma, vec![]));
+                    // Use the assertion to provide additional debugging info
+                    let is_reachable = self.solvers[0].solve(&po.lemma, vec![]);
+                    if is_reachable {
+                        if self.options.verbose > 1 {
+                            eprintln!("INN check failed: PO at frame {} hits init and is reachable from init(0)",
+                                     po.frame);
+                        }
+                    }
+                    assert!(!is_reachable,
+                           "INN check failed: PO {:?} at frame {} hits init and is reachable from init(0)", po, po.frame);
+                    
+                    if self.options.verbose > 3 {
+                        eprintln!("Path 5: Init-consistent PO with inn option, proceeding with normal blocking.");
+                    }
+                    // Do not return; let normal blocking/generalization proceed below
                 } else {
-                    // This case shouldn't be reached with the above frame 0 check
-                    assert!(false, "Unexpected: frame > 0 & !inn & hits init");
-                    return Some(false);
+                    // --- !inn Logic (Fixed) ---
+                    // Check reachability from actual frame 0 initial states
+                    if self.options.verbose > 4 {
+                        eprintln!("Running crucial reachability check for init-consistent state at frame {}", po.frame);
+                    }
+                    
+                    // Fix: Be explicit about using the Frame 0 solver to check reachability
+                    let is_reachable_from_init = self.solvers[0].solve(&po.lemma, vec![]);
+                    
+                    if is_reachable_from_init {
+                        // Reachable! Confirmed CEX.
+                        if self.options.verbose > 1 {
+                            eprintln!("Path 6: PO lemma at frame {} hits init and is reachable from frame 0. UNSAFE.", po.frame);
+                        }
+                        self.add_obligation(po); // Keep for witness
+                        return Some(false); // UNSAFE
+                    } else {
+                        // Consistent with init def, but NOT reachable from frame 0. Treat as blocked.
+                        if self.options.verbose > 2 {
+                            eprintln!("Path 7: PO lemma at frame {} hits init definition but is unreachable from frame 0. Generalizing.", po.frame);
+                        }
+                        blocked = true;             // Override: Treat as blocked
+                        requires_predecessor = false; // Override: Do not generate predecessor
+                        // Fall through to generalization logic below
+                    }
+                    // --- End !inn Logic ---
                 }
             }
 
-            // Check 2: Trivial Containment
-            if let Some((bf, _)) = self.frame.trivial_contained(po.frame, &po.lemma) {
-                // PO is subsumed by a lemma in a higher frame 'bf'.
-                // Push the obligation beyond that frame.
-                po.push_to(bf + 1);
-                self.add_obligation(po);
-                continue; // Process the next obligation
+            // Check 2: Trivial Containment (After init checks)
+            if !blocked { // Only check trivial containment if not already known to be blocked
+                if let Some((bf, _)) = self.frame.trivial_contained(po.frame, &po.lemma) {
+                    // PO is subsumed by a lemma in a higher frame 'bf'.
+                    // Push the obligation beyond that frame.
+                    if self.options.verbose > 3 {
+                        eprintln!("Path 8: PO trivially contained in frame {}. Pushing to frame {}.", bf, bf+1);
+                    }
+                    po.push_to(bf + 1);
+                    self.add_obligation(po);
+                    continue; // Process the next obligation
+                }
             }
 
-            // Prepare for blocking check
+            // Prepare for generalization
             if self.options.verbose > 2 {
                 self.frame.statistic();
             }
             po.bump_act();
             
-            // Check 3: Blocked Check
-            let blocked_start = Instant::now();
-            let blocked = self.blocked_with_ordered(po.frame, &po.lemma, false, false);
-            self.statistic.block_blocked_time += blocked_start.elapsed();
-
-            let mut invariant_found_during_generalization = false;
-            let mut requires_predecessor = !blocked; // Default assumption
-
             if blocked {
-                // State `po` is blocked. Attempt Generalization.
+                // State `po` is blocked (either by transition or because it hit unreachable init).
+                // Attempt Generalization.
                 let mic_type = if self.options.ic3.dynamic {
                     if let Some(mut n) = po.next.as_mut() {
                         let mut act = n.act;
@@ -328,10 +472,15 @@ impl IC3 {
                                 eprintln!("Note: Generalization for PO at frame {} produced no valid MICs.", po.frame);
                             }
                         }
+                        
                         // Decide if predecessor is still needed:
-                        // If invariant was found, no predecessor needed for this PO.
-                        // Otherwise, ALWAYS generate predecessor to ensure CEX path exploration.
-                        requires_predecessor = !invariant_found_during_generalization;
+                        // If the state was init-unreachable, requires_predecessor is already false
+                        // Otherwise check if invariant was found
+                        if !requires_predecessor {
+                            // Keep requires_predecessor as false (from init check)
+                        } else {
+                            requires_predecessor = !invariant_found_during_generalization;
+                        }
                     }
                     None => {
                         // Generalize failed early (initial CTI invalid). Predecessor required.
@@ -343,10 +492,9 @@ impl IC3 {
                 }
             }
 
-            // If invariant was found above, the main loop termination condition (empty queue + propagate)
-            // will eventually lead to SAFE. We don't need to do more with *this* `po`.
+            // If invariant was found above, continue to next PO
             if invariant_found_during_generalization {
-                return None; // Exit to outer loop for invariant check
+                continue; // The main loop will check for termination later
             }
 
             // Action: Predecessor Generation OR Re-add original PO
@@ -368,20 +516,8 @@ impl IC3 {
                 // Re-add the original obligation `po`. It must wait until its predecessor
                 // is processed and hopefully blocked/generalized.
                 self.add_obligation(po);
-            } else {
-                // This case should not be reached if invariant wasn't found.
-                debug_assert!(false, "Invalid control flow state in block function");
-                // If we get here, something went wrong - but we'll recover by generating a predecessor anyway
-                if self.options.verbose > 1 {
-                    eprintln!("Warning: Unexpected control flow in block function, generating predecessor anyway.");
-                }
-                let (pred_cti_lemma, inputs) = self.get_pred(po.frame, true);
-                let pred_po = ProofObligation::new(
-                    po.frame - 1, Lemma::new(pred_cti_lemma), vec![inputs], po.depth + 1, Some(po.clone()),
-                );
-                self.add_obligation(pred_po);
-                self.add_obligation(po);
             }
+            // If requires_predecessor is false, we simply drop this PO instance
         } // End while loop
 
         // If loop finishes, obligation queue is empty.
