@@ -44,8 +44,8 @@ const CTX_HEURISTIC_ARM_INDEX: usize = 0; // Arm 0 is always the dynamic heurist
 const CTX_TOTAL_MIC_ARMS: usize = 1 + NUM_FIXED_MIC_CONFIG_ARMS;
 
 // Reward weights - pushing power vs size reduction
-const PUSHING_POWER_WEIGHT: f64 = 0.7;
-const SIZE_REDUCTION_WEIGHT: f64 = 0.3;
+const PUSHING_POWER_WEIGHT: f64 = 0.6;
+const SIZE_REDUCTION_WEIGHT: f64 = 0.4;
 
 // Context dimension (features + bias)
 const CONTEXT_DIM: usize = 5; // [frame, lemma_len, act, depth, bias]
