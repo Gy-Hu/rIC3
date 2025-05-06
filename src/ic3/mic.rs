@@ -25,6 +25,17 @@ impl DropVarParameter {
             level: self.level - 1,
         }
     }
+    
+    // Accessor methods for private fields
+    #[inline]
+    pub fn max(&self) -> usize {
+        self.max
+    }
+    
+    #[inline]
+    pub fn level(&self) -> usize {
+        self.level
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -32,17 +32,20 @@ struct MicParamsConfig {
     level: usize,
 }
 
-// Define the fixed configurations for arms 1..N
-const FIXED_MIC_PARAM_CONFIGS: [MicParamsConfig; 5] = [
-    MicParamsConfig { limit: 0, max: 0, level: 0 },    // Minimal MIC
-    MicParamsConfig { limit: 1, max: 2, level: 1 },    // Basic CTG
-    MicParamsConfig { limit: 1, max: 5, level: 1 },    // Medium CTG
-    MicParamsConfig { limit: 5, max: 5, level: 1 },    // Strong CTG Limit
-    MicParamsConfig { limit: 10, max: 5, level: 1 },   // V. Strong CTG Limit
+// Redesigned arm configuration - more focused strategies
+const FIXED_MIC_PARAM_CONFIGS: [MicParamsConfig; 4] = [
+    MicParamsConfig { limit: 0, max: 0, level: 0 },    // Minimal MIC (basic)
+    MicParamsConfig { limit: 1, max: 3, level: 1 },    // Balanced CTG
+    MicParamsConfig { limit: 2, max: 5, level: 1 },    // Aggressive CTG 
+    MicParamsConfig { limit: 8, max: 4, level: 1 },    // Deep CTG
 ];
 const NUM_FIXED_MIC_CONFIG_ARMS: usize = FIXED_MIC_PARAM_CONFIGS.len();
 const CTX_HEURISTIC_ARM_INDEX: usize = 0; // Arm 0 is always the dynamic heuristic
 const CTX_TOTAL_MIC_ARMS: usize = 1 + NUM_FIXED_MIC_CONFIG_ARMS;
+
+// Reward weights - pushing power vs size reduction
+const PUSHING_POWER_WEIGHT: f64 = 0.7;
+const SIZE_REDUCTION_WEIGHT: f64 = 0.3;
 
 // Context dimension (features + bias)
 const CONTEXT_DIM: usize = 5; // [frame, lemma_len, act, depth, bias]
@@ -162,6 +165,7 @@ impl IC3 {
         }
         
         let mic_core = self.solvers[po.frame - 1].inductive_core();
+        let original_cube_size = mic_core.len();
         let chosen_arm_idx: usize;
         let mic_type_to_use: MicType;
 
@@ -174,12 +178,22 @@ impl IC3 {
                 // MAB chose the heuristic arm - calculate parameters now
                 let heuristic_params = self.calculate_heuristic_mic_params(&po);
                 mic_type_to_use = MicType::DropVar(heuristic_params);
+                
+                if self.options.verbose > 4 {
+                    println!("LinUCB chose Heuristic Arm: limit={}, max={}, level={}", 
+                        heuristic_params.limit, heuristic_params.max(), heuristic_params.level());
+                }
             } else {
                 // MAB chose a fixed arm
                 let fixed_arm_index = chosen_arm_idx - 1; // Adjust index for the FIXED_MIC_PARAM_CONFIGS array
                 let fixed_config = FIXED_MIC_PARAM_CONFIGS[fixed_arm_index];
                 mic_type_to_use = MicType::DropVar(DropVarParameter::new(
                     fixed_config.limit, fixed_config.max, fixed_config.level));
+                
+                if self.options.verbose > 4 {
+                    println!("LinUCB chose Fixed Arm {}: limit={}, max={}, level={}", 
+                        fixed_arm_index, fixed_config.limit, fixed_config.max, fixed_config.level);
+                }
             }
         } else if self.options.ic3.dynamic {
             // --- Use Original Dynamic Logic ---
@@ -221,17 +235,82 @@ impl IC3 {
         }
         
         // Apply MIC with the chosen strategy
-        let mic = self.mic(po.frame, mic_core, &[], mic_type_to_use);
+        let mic = self.mic(po.frame, mic_core.clone(), &[], mic_type_to_use);
+        let final_cube_size = mic.len();
+        let size_reduction = original_cube_size as f64 - final_cube_size as f64;
         
         // Push the lemma and track the result
         let (pushed_frame, final_mic) = self.push_lemma(po.frame, mic);
+        let pushing_power = (pushed_frame as f64) - (po.frame as f64);
         
         if self.options.ic3.enable_ctx_mab {
             // --- MAB Reward Calculation & Update ---
             let context_vec = self.get_context_vector(&po);
-            let reward = (pushed_frame as f64) - (po.frame as f64); // Pushing Power reward
+            
+            // Calculate combined reward
+            let combined_reward = 
+                PUSHING_POWER_WEIGHT * pushing_power + 
+                SIZE_REDUCTION_WEIGHT * size_reduction.max(0.0);
+            
+            // Log detailed information if verbose
+            if self.options.verbose > 3 {
+                // Log MAB decision data to CSV
+                use std::fs::OpenOptions;
+                use std::io::Write;
+                
+                let file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("mab_decision_log.csv");
+                
+                if let Ok(mut file) = file {
+                    // Check if file is empty and write header if needed
+                    if file.metadata().unwrap().len() == 0 {
+                        let _ = writeln!(file, "frame,arm,activity,depth,cube_size,pushing_power,size_reduction,combined_reward");
+                    }
+                    
+                    // Write the decision data
+                    let _ = writeln!(
+                        file,
+                        "{},{},{:.2},{},{},{:.2},{:.2},{:.2}",
+                        po.frame,
+                        chosen_arm_idx,
+                        po.act,
+                        po.depth,
+                        original_cube_size,
+                        pushing_power,
+                        size_reduction,
+                        combined_reward
+                    );
+                }
+                
+                // If very verbose, also log context vector
+                if self.options.verbose > 5 {
+                    let file = OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("mab_context_vectors.csv");
+                    
+                    if let Ok(mut file) = file {
+                        if file.metadata().unwrap().len() == 0 {
+                            let mut header = String::from("frame,arm");
+                            for i in 0..CONTEXT_DIM {
+                                header.push_str(&format!(",dim{}", i));
+                            }
+                            let _ = writeln!(file, "{}", header);
+                        }
+                        
+                        let mut line = format!("{},{}", po.frame, chosen_arm_idx);
+                        for i in 0..CONTEXT_DIM {
+                            line.push_str(&format!(",{:.3}", context_vec[i]));
+                        }
+                        let _ = writeln!(file, "{}", line);
+                    }
+                }
+            }
+            
             // Update LinUCB stats for the chosen arm
-            self.update_linucb(chosen_arm_idx, &context_vec, reward);
+            self.update_linucb(chosen_arm_idx, &context_vec, combined_reward);
         }
         
         self.statistic.avg_po_cube_len += po.lemma.len();
@@ -466,20 +545,6 @@ impl IC3 {
         
         // Count arm pulls for statistics
         self.ctx_mab_arm_pulls[best_arm] += 1;
-        
-        if self.options.verbose > 4 {
-            if best_arm == CTX_HEURISTIC_ARM_INDEX {
-                println!("LinUCB chose Heuristic Arm ({} pulls)", self.ctx_mab_arm_pulls[CTX_HEURISTIC_ARM_INDEX]);
-            } else {
-                let config_idx = best_arm - 1;
-                println!("LinUCB chose Fixed Arm {} ({} pulls): limit={}, max={}, level={}", 
-                    config_idx + 1, 
-                    self.ctx_mab_arm_pulls[best_arm],
-                    FIXED_MIC_PARAM_CONFIGS[config_idx].limit,
-                    FIXED_MIC_PARAM_CONFIGS[config_idx].max,
-                    FIXED_MIC_PARAM_CONFIGS[config_idx].level);
-            }
-        }
         
         best_arm
     }
