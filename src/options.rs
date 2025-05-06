@@ -105,6 +105,14 @@ pub struct IC3Options {
     /// ic3 without predicate property
     #[arg(long = "ic3-no-pred-prop", default_value_t = false)]
     pub no_pred_prop: bool,
+    
+    /// enable Contextual MAB (LinUCB) for MIC strategy selection
+    #[arg(long = "ic3-enable-ctx-mab", default_value_t = false)]
+    pub enable_ctx_mab: bool,
+    
+    /// LinUCB exploration parameter alpha
+    #[arg(long = "ic3-ctx-mab-alpha", default_value_t = 1.0)]
+    pub mic_ctx_mab_alpha: f64,
 }
 
 #[derive(Args, Clone, Debug)]
