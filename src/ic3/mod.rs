@@ -40,8 +40,15 @@ const FIXED_MIC_PARAM_CONFIGS: [MicParamsConfig; 4] = [
     MicParamsConfig { limit: 8, max: 4, level: 1 },    // Deep CTG
 ];
 const NUM_FIXED_MIC_CONFIG_ARMS: usize = FIXED_MIC_PARAM_CONFIGS.len();
-const CTX_HEURISTIC_ARM_INDEX: usize = 0; // Arm 0 is always the dynamic heuristic
-const CTX_TOTAL_MIC_ARMS: usize = 1 + NUM_FIXED_MIC_CONFIG_ARMS;
+
+// Dynamic heuristic arm indices
+const CTX_BALANCED_HEURISTIC_ARM_INDEX: usize = 0;
+const CTX_AGGRESSIVE_HEURISTIC_ARM_INDEX: usize = 1;
+const CTX_CONSERVATIVE_HEURISTIC_ARM_INDEX: usize = 2;
+const NUM_DYNAMIC_HEURISTIC_ARMS: usize = 3;
+
+// Fixed arms will start their indices after these
+const CTX_TOTAL_MIC_ARMS: usize = NUM_DYNAMIC_HEURISTIC_ARMS + NUM_FIXED_MIC_CONFIG_ARMS;
 
 // Reward weights - pushing power vs size reduction
 const PUSHING_POWER_WEIGHT: f64 = 0.6;
@@ -174,18 +181,36 @@ impl IC3 {
             let context_vec = self.get_context_vector(&po);
             chosen_arm_idx = self.choose_mic_arm_linucb(&context_vec);
 
-            if chosen_arm_idx == CTX_HEURISTIC_ARM_INDEX {
-                // MAB chose the heuristic arm - calculate parameters now
-                let heuristic_params = self.calculate_heuristic_mic_params(&po);
+            if chosen_arm_idx == CTX_BALANCED_HEURISTIC_ARM_INDEX {
+                // MAB chose the balanced heuristic arm
+                let heuristic_params = self.calculate_balanced_heuristic_mic_params(&po);
                 mic_type_to_use = MicType::DropVar(heuristic_params);
                 
                 if self.options.verbose > 4 {
-                    println!("LinUCB chose Heuristic Arm: limit={}, max={}, level={}", 
+                    println!("LinUCB chose Balanced Heuristic Arm: limit={}, max={}, level={}", 
+                        heuristic_params.limit, heuristic_params.max(), heuristic_params.level());
+                }
+            } else if chosen_arm_idx == CTX_AGGRESSIVE_HEURISTIC_ARM_INDEX {
+                // MAB chose the aggressive heuristic arm
+                let heuristic_params = self.calculate_aggressive_heuristic_mic_params(&po);
+                mic_type_to_use = MicType::DropVar(heuristic_params);
+                
+                if self.options.verbose > 4 {
+                    println!("LinUCB chose Aggressive Heuristic Arm: limit={}, max={}, level={}", 
+                        heuristic_params.limit, heuristic_params.max(), heuristic_params.level());
+                }
+            } else if chosen_arm_idx == CTX_CONSERVATIVE_HEURISTIC_ARM_INDEX {
+                // MAB chose the conservative heuristic arm
+                let heuristic_params = self.calculate_conservative_heuristic_mic_params(&po);
+                mic_type_to_use = MicType::DropVar(heuristic_params);
+                
+                if self.options.verbose > 4 {
+                    println!("LinUCB chose Conservative Heuristic Arm: limit={}, max={}, level={}", 
                         heuristic_params.limit, heuristic_params.max(), heuristic_params.level());
                 }
             } else {
                 // MAB chose a fixed arm
-                let fixed_arm_index = chosen_arm_idx - 1; // Adjust index for the FIXED_MIC_PARAM_CONFIGS array
+                let fixed_arm_index = chosen_arm_idx - NUM_DYNAMIC_HEURISTIC_ARMS; // Adjust index for the FIXED_MIC_PARAM_CONFIGS array
                 let fixed_config = FIXED_MIC_PARAM_CONFIGS[fixed_arm_index];
                 mic_type_to_use = MicType::DropVar(DropVarParameter::new(
                     fixed_config.limit, fixed_config.max, fixed_config.level));
@@ -227,11 +252,11 @@ impl IC3 {
             } else {
                 MicType::DropVar(Default::default())
             };
-            chosen_arm_idx = CTX_HEURISTIC_ARM_INDEX; // For statistics/logging
+            chosen_arm_idx = CTX_BALANCED_HEURISTIC_ARM_INDEX; // For statistics/logging
         } else {
             // --- Use Static Baseline Logic ---
             mic_type_to_use = MicType::from_options(&self.options);
-            chosen_arm_idx = CTX_HEURISTIC_ARM_INDEX; // For statistics/logging
+            chosen_arm_idx = CTX_BALANCED_HEURISTIC_ARM_INDEX; // For statistics/logging
         }
         
         // Apply MIC with the chosen strategy
@@ -247,10 +272,17 @@ impl IC3 {
             // --- MAB Reward Calculation & Update ---
             let context_vec = self.get_context_vector(&po);
             
-            // Calculate combined reward
+            // Calculate combined reward with stronger penalty for growth
+            let size_reduction_component = if size_reduction >= 0.0 {
+                SIZE_REDUCTION_WEIGHT * size_reduction
+            } else {
+                // Apply stronger penalty for growth using the configurable factor
+                SIZE_REDUCTION_WEIGHT * size_reduction * self.options.ic3.mab_growth_penalty_factor
+            };
+            
             let combined_reward = 
                 PUSHING_POWER_WEIGHT * pushing_power + 
-                SIZE_REDUCTION_WEIGHT * size_reduction.max(0.0);
+                size_reduction_component;
             
             // Log detailed information if verbose
             if self.options.verbose > 3 {
@@ -266,13 +298,13 @@ impl IC3 {
                 if let Ok(mut file) = file {
                     // Check if file is empty and write header if needed
                     if file.metadata().unwrap().len() == 0 {
-                        let _ = writeln!(file, "frame,arm,activity,depth,cube_size,pushing_power,size_reduction,combined_reward");
+                        let _ = writeln!(file, "frame,arm,activity,depth,cube_size,pushing_power,size_reduction,size_reduction_component,combined_reward");
                     }
                     
-                    // Write the decision data
+                    // Write the decision data with size_reduction_component
                     let _ = writeln!(
                         file,
-                        "{},{},{:.2},{},{},{:.2},{:.2},{:.2}",
+                        "{},{},{:.2},{},{},{:.2},{:.2},{:.2},{:.2}",
                         po.frame,
                         chosen_arm_idx,
                         po.act,
@@ -280,6 +312,7 @@ impl IC3 {
                         original_cube_size,
                         pushing_power,
                         size_reduction,
+                        size_reduction_component,
                         combined_reward
                     );
                 }
@@ -558,14 +591,20 @@ impl IC3 {
         // Update b: b = b + r * x
         self.ctx_mab_b[arm_idx] = &self.ctx_mab_b[arm_idx] + context * reward;
         
+        // Get regularization parameter
+        let lambda = self.options.ic3.mic_ctx_mab_lambda;
+        
+        // Regularize A with lambda*I before inversion
+        let regularized_A = &self.ctx_mab_A[arm_idx] + MatrixDD::identity(CONTEXT_DIM, CONTEXT_DIM) * lambda;
+        
         // Recompute A_inv and theta for the updated arm
-        if let Some(inv) = self.ctx_mab_A[arm_idx].clone().try_inverse() {
+        if let Some(inv) = regularized_A.try_inverse() {
             self.ctx_mab_A_inv[arm_idx] = inv;
             self.ctx_mab_theta[arm_idx] = &self.ctx_mab_A_inv[arm_idx] * &self.ctx_mab_b[arm_idx];
         } else {
             // Handle error - matrix became non-invertible
             if self.options.verbose > 0 {
-                eprintln!("Warning: Matrix A for arm {} became non-invertible.", arm_idx);
+                eprintln!("Warning: Matrix A for arm {} became non-invertible even with regularization.", arm_idx);
             }
             // Reset this arm to identity matrix
             self.ctx_mab_A[arm_idx] = MatrixDD::identity(CONTEXT_DIM, CONTEXT_DIM);
@@ -580,7 +619,7 @@ impl IC3 {
     }
 
     // Calculate heuristic MIC parameters based on PO activity
-    fn calculate_heuristic_mic_params(&self, po: &ProofObligation) -> DropVarParameter {
+    fn calculate_balanced_heuristic_mic_params(&self, po: &ProofObligation) -> DropVarParameter {
         // Extract activity-based calculation from the original dynamic code
         if let Some(mut n) = po.next.as_ref() {
             let mut act = n.act;
@@ -604,6 +643,81 @@ impl IC3 {
                     let max = (act - CTG_THRESHOLD) as usize / 10 + 2;
                     DropVarParameter::new(1, max, 1)
                 }
+                ..CTG_THRESHOLD => DropVarParameter::new(0, 0, 0),
+                _ => panic!(), // Should never happen
+            }
+        } else {
+            DropVarParameter::default()
+        }
+    }
+
+    // Calculate aggressive heuristic MIC parameters based on PO activity
+    fn calculate_aggressive_heuristic_mic_params(&self, po: &ProofObligation) -> DropVarParameter {
+        if let Some(mut n) = po.next.as_ref() {
+            let mut act = n.act;
+            for _ in 0..2 {
+                if let Some(nn) = n.next.as_ref() {
+                    n = nn;
+                    act = act.max(n.act);
+                } else {
+                    break;
+                }
+            }
+            
+            // Lower thresholds for more aggressive MIC
+            const CTG_THRESHOLD: f64 = 5.0;    // Lower threshold (was 10.0)
+            const EXCTG_THRESHOLD: f64 = 25.0; // Lower threshold (was 40.0)
+            
+            match act {
+                EXCTG_THRESHOLD.. => {
+                    // Increased scaling for limit and level=1 for more aggressive generalization
+                    let limit = ((act - EXCTG_THRESHOLD).powf(0.3) * 2.5 + 6.0).round() as usize;
+                    DropVarParameter::new(limit, 6, 1) // Higher max
+                }
+                CTG_THRESHOLD..EXCTG_THRESHOLD => {
+                    // More readily use higher max values
+                    let max = (act - CTG_THRESHOLD) as usize / 8 + 3;
+                    DropVarParameter::new(2, max, 1) // Increased limit
+                }
+                // Use level=1 even for low activity (more aggressive)
+                ..CTG_THRESHOLD => DropVarParameter::new(1, 1, 1),
+                _ => panic!(), // Should never happen
+            }
+        } else {
+            // Default to at least minimal generalization
+            DropVarParameter::new(1, 1, 1)
+        }
+    }
+
+    // Calculate conservative heuristic MIC parameters based on PO activity
+    fn calculate_conservative_heuristic_mic_params(&self, po: &ProofObligation) -> DropVarParameter {
+        if let Some(mut n) = po.next.as_ref() {
+            let mut act = n.act;
+            for _ in 0..2 {
+                if let Some(nn) = n.next.as_ref() {
+                    n = nn;
+                    act = act.max(n.act);
+                } else {
+                    break;
+                }
+            }
+            
+            // Higher thresholds for more conservative MIC
+            const CTG_THRESHOLD: f64 = 15.0;    // Higher threshold (was 10.0)
+            const EXCTG_THRESHOLD: f64 = 50.0;  // Higher threshold (was 40.0)
+            
+            match act {
+                EXCTG_THRESHOLD.. => {
+                    // Reduced scaling and capped limit for less aggressive generalization
+                    let limit = (((act - EXCTG_THRESHOLD).powf(0.3) * 1.5 + 4.0).round() as usize).min(6);
+                    DropVarParameter::new(limit, 3, 1) // Lower max
+                }
+                CTG_THRESHOLD..EXCTG_THRESHOLD => {
+                    // Reduced max values
+                    let max = ((act - CTG_THRESHOLD) as usize / 12 + 1).min(3);
+                    DropVarParameter::new(1, max, 0) // Conservative with level=0
+                }
+                // Strongly prefer level=0 for low activity
                 ..CTG_THRESHOLD => DropVarParameter::new(0, 0, 0),
                 _ => panic!(), // Should never happen
             }
@@ -792,12 +906,20 @@ impl Engine for IC3 {
             println!("\n--- Contextual MAB Statistics ---");
             println!("Arm pulls:");
             
-            // Print heuristic arm stats
-            println!("  Arm 0 (Heuristic): {} pulls", self.ctx_mab_arm_pulls[CTX_HEURISTIC_ARM_INDEX]);
+            // Print dynamic heuristic arm stats
+            println!("  Arm {} (Balanced Heuristic): {} pulls", 
+                CTX_BALANCED_HEURISTIC_ARM_INDEX, 
+                self.ctx_mab_arm_pulls[CTX_BALANCED_HEURISTIC_ARM_INDEX]);
+            println!("  Arm {} (Aggressive Heuristic): {} pulls", 
+                CTX_AGGRESSIVE_HEURISTIC_ARM_INDEX, 
+                self.ctx_mab_arm_pulls[CTX_AGGRESSIVE_HEURISTIC_ARM_INDEX]);
+            println!("  Arm {} (Conservative Heuristic): {} pulls", 
+                CTX_CONSERVATIVE_HEURISTIC_ARM_INDEX, 
+                self.ctx_mab_arm_pulls[CTX_CONSERVATIVE_HEURISTIC_ARM_INDEX]);
             
             // Print fixed arm stats
             for i in 0..NUM_FIXED_MIC_CONFIG_ARMS {
-                let arm_idx = i + 1;
+                let arm_idx = i + NUM_DYNAMIC_HEURISTIC_ARMS;
                 let config = FIXED_MIC_PARAM_CONFIGS[i];
                 println!("  Arm {} (limit={}, max={}, level={}): {} pulls", 
                     arm_idx, config.limit, config.max, config.level, 

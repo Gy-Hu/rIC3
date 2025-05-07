@@ -113,6 +113,14 @@ pub struct IC3Options {
     /// LinUCB exploration parameter alpha
     #[arg(long = "ic3-ctx-mab-alpha", default_value_t = 1.0)]
     pub mic_ctx_mab_alpha: f64,
+    
+    /// LinUCB regularization parameter lambda
+    #[arg(long = "ic3-ctx-mab-lambda", default_value_t = 0.1)]
+    pub mic_ctx_mab_lambda: f64,
+    
+    /// Penalty factor for negative size reductions (growth)
+    #[arg(long = "ic3-mab-growth-penalty-factor", default_value_t = 1.5)]
+    pub mab_growth_penalty_factor: f64,
 }
 
 #[derive(Args, Clone, Debug)]
