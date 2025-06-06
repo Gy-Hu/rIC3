@@ -65,7 +65,7 @@ pub struct IC3 {
     solvers: Vec<Solver>,
     lift: Solver,
     bad_ts: Grc<TransysCtx>,
-    bad_solver: cadical::Solver,
+    bad_solver: Solver, // use gipsat::Solver via the imported Solver alias
     bad_lift: Solver,
     bad_input: GHashMap<Var, Var>,
     frame: Frames,
@@ -119,7 +119,7 @@ impl IC3 {
 
     fn extend(&mut self) {
         if !self.options.ic3.no_pred_prop {
-            self.bad_solver = cadical::Solver::new();
+            self.bad_solver = Solver::new(self.options.clone(), None, &self.bad_ts);
             self.bad_ts.load_trans(&mut self.bad_solver, true);
         }
         let mut solver = Solver::new(self.options.clone(), Some(self.frame.len()), &self.ts);
@@ -756,13 +756,14 @@ impl IC3 {
             ts.constraints.clone()
         };
         let rng = StdRng::seed_from_u64(options.rseed);
+        let bad_solver = Solver::new(options.clone(), None, &bad_ts);
         Self {
             options,
             ts,
             activity,
             solvers: Vec::new(),
             bad_ts,
-            bad_solver: cadical::Solver::new(),
+            bad_solver,
             bad_lift,
             bad_input,
             lift,

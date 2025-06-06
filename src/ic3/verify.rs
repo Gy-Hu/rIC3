@@ -1,27 +1,29 @@
 use super::{IC3, proofoblig::ProofObligation};
 use crate::transys::{TransysCtx, TransysIf, unroll::TransysUnroll};
-use cadical::Solver;
+use crate::gipsat::Solver;
 use logic_form::{Lemma, LitVec};
 use satif::Satif;
 use std::ops::Deref;
 
 pub fn verify_invariant(ts: &TransysCtx, invariants: &[Lemma]) -> bool {
-    let mut solver = Solver::new();
+    use giputils::grc::Grc;
+    let ts_grc = Grc::new(ts.clone());
+    let mut solver = Solver::new(Default::default(), None, &ts_grc);
     ts.load_trans(&mut solver, true);
     for lemma in invariants {
         let assump: LitVec = ts.init.iter().chain(lemma.iter()).copied().collect();
-        if solver.solve(&assump) {
+        if solver.solve(&assump, vec![]) {
             return false;
         }
     }
     for lemma in invariants {
         solver.add_clause(&!lemma.deref());
     }
-    if solver.solve(&ts.bad.cube()) {
+    if solver.solve(&ts.bad.cube(), vec![]) {
         return false;
     }
     for lemma in invariants {
-        if solver.solve(&ts.lits_next(lemma)) {
+        if solver.solve(&ts.lits_next(lemma), vec![]) {
             return false;
         }
     }
@@ -60,9 +62,11 @@ impl IC3 {
     }
 
     pub fn check_witness_by_bmc(&mut self, b: ProofObligation) -> Option<LitVec> {
+        use giputils::grc::Grc;
         let mut uts = TransysUnroll::new(self.ts.deref());
         uts.unroll_to(b.depth);
-        let mut solver: Box<dyn satif::Satif> = Box::new(cadical::Solver::new());
+        let ts_grc = Grc::new(uts.ts.clone());
+        let mut solver: Box<dyn satif::Satif> = Box::new(Solver::new(Default::default(), None, &ts_grc));
         for k in 0..=b.depth {
             uts.load_trans(solver.as_mut(), k, false);
         }

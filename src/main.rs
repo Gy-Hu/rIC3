@@ -3,10 +3,10 @@
 use clap::Parser;
 use rIC3::{
     Engine,
-    bmc::BMC,
+    //bmc::BMC,
     frontend::aig::AigFrontend,
     ic3::IC3,
-    kind::Kind,
+    //kind::Kind,
     options::{self, Options},
     portfolio::portfolio_main,
 };
@@ -42,8 +42,8 @@ fn main() {
     }
     let mut engine: Box<dyn Engine> = match options.engine {
         options::Engine::IC3 => Box::new(IC3::new(options.clone(), ts, vec![])),
-        options::Engine::Kind => Box::new(Kind::new(options.clone(), ts)),
-        options::Engine::BMC => Box::new(BMC::new(options.clone(), ts)),
+        // options::Engine::Kind => Box::new(Kind::new(options.clone(), ts)),
+        // options::Engine::BMC => Box::new(BMC::new(options.clone(), ts)),
         _ => unreachable!(),
     };
     if options.interrupt_statistic {
