@@ -398,6 +398,7 @@ impl Solver {
     }
 }
 
+
 impl Satif for Solver {
     #[inline]
     fn new_var(&mut self) -> Var {
@@ -424,7 +425,7 @@ impl Satif for Solver {
     }
 
     fn add_clause(&mut self, _clause: &[Lit]) {
-        todo!()
+        self.add_clause_inner(_clause, ClauseKind::Trans);
     }
 
     fn solve(&mut self, assumps: &[Lit]) -> bool {

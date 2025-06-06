@@ -207,6 +207,7 @@ impl IC3 {
         contained_check: bool,
         po: Option<ProofObligation>,
     ) -> bool {
+        self.options.ic3.no_pred_prop = true;
         let lemma = Lemma::new(lemma);
         if self.options.verbose > 5 {
             println!("add lemma: frame:{frame}, {}", lemma);
