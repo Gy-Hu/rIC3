@@ -1,0 +1,3 @@
+FROM scratch
+COPY ./rIC3-musl-static /rIC3
+ENTRYPOINT ["/rIC3"]

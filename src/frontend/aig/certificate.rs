@@ -30,7 +30,7 @@ impl AigFrontend {
             certifaiger.to_file(certificate_path, true);
             certifaiger_check(&self.opt, certificate_path);
         } else {
-            if self.opt.certificate.is_none() && !self.opt.certify && !self.opt.witness {
+            if self.opt.certificate.is_none() && !self.opt.certify && !self.opt.witness && self.opt.dump_witness.is_none() {
                 return;
             }
             let witness = engine.witness(&self.origin_ts);
@@ -40,6 +40,10 @@ impl AigFrontend {
             }
             if let Some(certificate_path) = &self.opt.certificate {
                 let mut file: File = File::create(certificate_path).unwrap();
+                file.write_all(witness.as_bytes()).unwrap();
+            }
+            if let Some(dump_witness_path) = &self.opt.dump_witness {
+                let mut file: File = File::create(dump_witness_path).unwrap();
                 file.write_all(witness.as_bytes()).unwrap();
             }
             if !self.opt.certify {

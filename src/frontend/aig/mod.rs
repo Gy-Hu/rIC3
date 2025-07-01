@@ -71,6 +71,9 @@ impl Transys {
                 init.insert(lv, i);
             }
         }
+        if aig.bads.is_empty() {
+            panic!("Error: No bad properties found in AIG file");
+        }
         let bad = aig.bads[0].to_lit();
         let rel = aig.cnf(compact);
         let mut rst = GHashMap::new();
@@ -143,16 +146,31 @@ impl AigFrontend {
             }
             aig.compress_property();
         }
-        let origin_ts = Transys::from_aig(&origin_aig, false);
+        if opt.verbose > 1 {
+            println!("Debug: aig.bads.len() = {}", aig.bads.len());
+        }
+        let origin_ts = Transys::from_aig(&aig, false);
         Self {
-            origin_aig,
+            origin_aig: origin_aig,
             origin_ts,
             opt: opt.clone(),
         }
     }
 
     pub fn ts(&mut self) -> Transys {
-        let (aig, rst) = aig_preprocess(&self.origin_aig, &self.opt);
+        let mut aig_to_process = self.origin_aig.clone();
+        if aig_to_process.bads.len() > 1 {
+            aig_to_process.compress_property();
+        }
+        let (aig, rst) = aig_preprocess(&aig_to_process, &self.opt);
+
+        if aig.bads.is_empty() && !aig_to_process.bads.is_empty() {
+            if self.opt.verbose > 0 {
+                println!("Warning: AIG preprocessing removed the property. Using un-preprocessed model to avoid panic.");
+            }
+            return Transys::from_aig(&aig_to_process, true);
+        }
+
         let mut ts = Transys::from_aig(&aig, true);
         ts.rst = rst;
         ts

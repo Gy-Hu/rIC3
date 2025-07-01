@@ -31,6 +31,10 @@ pub struct Options {
     #[arg(long, default_value_t = false)]
     pub witness: bool,
 
+    /// dump witness to file when model is unsafe
+    #[arg(long)]
+    pub dump_witness: Option<PathBuf>,
+
     #[command(flatten)]
     pub ic3: IC3Options,
 
