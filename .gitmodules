@@ -6,7 +6,7 @@
 	url = https://github.com/gipsyh/logic-form.git
 [submodule "deps/giputils"]
 	path = deps/giputils
-	url = https://github.com/gipsyh/giputils.git
+	url = https://github.com/Gy-Hu/giputils.git
 [submodule "deps/satif"]
 	path = deps/satif
 	url = https://github.com/gipsyh/satif.git
