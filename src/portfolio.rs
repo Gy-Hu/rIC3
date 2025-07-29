@@ -80,6 +80,15 @@ impl Portfolio {
         new_engine("-e ic3 --ic3-inn");
         new_engine("-e ic3 --ic3-ctg --ic3-inn");
         new_engine("-e ic3 --ic3-ctg --ic3-ctg-limit 5 --ic3-inn");
+        new_engine("-e ic3 --ic3-ctg --ic3-ctp --ic3-inn --ic3-no-pred-prop --ic3-ctg-max 9 --ic3-ctg-limit 4 --rseed 42");
+        new_engine("-e ic3 --ic3-dynamic --ic3-ctp --ic3-no-pred-prop --rseed 42");
+        new_engine("-e ic3 --ic3-ctg --ic3-ctp --ic3-ctg-max 10 --ic3-ctg-limit 1 --rseed 42");
+        new_engine("-e ic3 --ic3-ctg --ic3-ctp --ic3-inn --ic3-abs-cst --ic3-no-pred-prop --ic3-ctg-max 7 --ic3-ctg-limit 2 --rseed 42");
+        new_engine("-e ic3 --ic3-inn --rseed 42");
+        new_engine("-e ic3 --ic3-inn --ic3-no-pred-prop --rseed 42");
+        new_engine("-e ic3 --ic3-dynamic --ic3-inn --ic3-no-pred-prop --rseed 42");
+        new_engine("-e ic3 --ic3-enable-ctx-mab");
+
         // TODO ...
         // new_engine("-e bmc --step 1");
         // new_engine("-e bmc --step 10");
