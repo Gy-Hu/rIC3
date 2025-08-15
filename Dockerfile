@@ -1,12 +1,17 @@
-FROM ubuntu:latest AS builder
-RUN apt update && apt install -y curl build-essential git cmake zlib1g-dev pkg-config libssl-dev && apt-get clean
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain nightly
-ENV PATH="/root/.cargo/bin:${PATH}"
-WORKDIR /root/rIC3
+FROM messense/rust-musl-cross:x86_64-musl AS builder
+
+WORKDIR /work
 COPY . .
 RUN git submodule update --init
-RUN cargo build --release
 
-FROM ubuntu:latest
-COPY --from=builder /root/rIC3/target/release/rIC3 /usr/local/bin/
-ENTRYPOINT ["rIC3"]
+# 清理符号链接冲突
+RUN find . -name "makefile" -type l -delete || true
+RUN find . -name "Makefile" -type l -delete || true
+
+# 添加 musl 目标并构建静态二进制
+RUN rustup target add x86_64-unknown-linux-musl
+RUN cargo build --release --target x86_64-unknown-linux-musl
+
+FROM scratch
+COPY --from=builder /work/target/x86_64-unknown-linux-musl/release/rIC3 /usr/local/bin/rIC3
+ENTRYPOINT ["/usr/local/bin/rIC3"]
