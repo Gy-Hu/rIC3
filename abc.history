@@ -1,0 +1,3 @@
+&r /Users/huguangyu/coding_env/rIC3-static/certifaiger/examples/01_model.aag
+source -s abc.rc
+&r /Users/huguangyu/coding_env/rIC3-static/examples/counter/counter.aig

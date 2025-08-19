@@ -1,0 +1,29 @@
+FROM --platform=linux/amd64 alpine:latest AS builder
+
+# Install dependencies
+RUN apk add --no-cache \
+    build-base \
+    rust \
+    cargo \
+    cmake \
+    openssl-dev \
+    openssl-libs-static \
+    git \
+    pkgconfig
+
+# Set environment variables for static linking
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+ENV OPENSSL_STATIC=1
+ENV OPENSSL_DIR=/usr
+
+WORKDIR /app
+COPY . .
+
+# Build the project
+RUN cargo build --release
+
+# Final stage - minimal image
+FROM --platform=linux/amd64 alpine:latest
+RUN apk add --no-cache libgcc
+COPY --from=builder /app/target/release/rIC3 /usr/local/bin/rIC3
+ENTRYPOINT ["/usr/local/bin/rIC3"]

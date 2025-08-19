@@ -1,0 +1,127 @@
+diff --git a/.cargo/config.toml b/.cargo/config.toml
+new file mode 100644
+index 0000000..730c383
+--- /dev/null
++++ b/.cargo/config.toml
+@@ -0,0 +1,2 @@
++[target.x86_64-unknown-linux-musl]
++linker = "x86_64-linux-musl-gcc"
+\ No newline at end of file
+diff --git a/.gitmodules b/.gitmodules
+index fb75af0..927b54d 100644
+--- a/.gitmodules
++++ b/.gitmodules
+@@ -6,7 +6,8 @@
+ 	url = https://github.com/gipsyh/logic-form.git
+ [submodule "deps/giputils"]
+ 	path = deps/giputils
+-	url = https://github.com/gipsyh/giputils.git
++	url = https://github.com/Gy-Hu/giputils.git
++	branch = vendored-openssl-v0.3.0
+ [submodule "deps/satif"]
+ 	path = deps/satif
+ 	url = https://github.com/gipsyh/satif.git
+diff --git a/Dockerfile.final b/Dockerfile.final
+new file mode 100644
+index 0000000..27d68af
+--- /dev/null
++++ b/Dockerfile.final
+@@ -0,0 +1,3 @@
++FROM scratch
++COPY ./rIC3-musl-static /rIC3
++ENTRYPOINT ["/rIC3"]
+\ No newline at end of file
+diff --git a/deps/giputils b/deps/giputils
+index cf32aaa..09ef5f5 160000
+--- a/deps/giputils
++++ b/deps/giputils
+@@ -1 +1 @@
+-Subproject commit cf32aaa52a5509291a383cf8f7d2d37c7e9ed6bf
++Subproject commit 09ef5f518fa3935e2dd750ecff4ffadb3b8b4c6b
+diff --git a/src/frontend/aig/certificate.rs b/src/frontend/aig/certificate.rs
+index 539441f..a5c97d9 100644
+--- a/src/frontend/aig/certificate.rs
++++ b/src/frontend/aig/certificate.rs
+@@ -30,7 +30,7 @@ impl AigFrontend {
+             certifaiger.to_file(certificate_path, true);
+             certifaiger_check(&self.opt, certificate_path);
+         } else {
+-            if self.opt.certificate.is_none() && !self.opt.certify && !self.opt.witness {
++            if self.opt.certificate.is_none() && !self.opt.certify && !self.opt.witness && self.opt.dump_witness.is_none() {
+                 return;
+             }
+             let witness = engine.witness(&self.origin_ts);
+@@ -42,6 +42,10 @@ impl AigFrontend {
+                 let mut file: File = File::create(certificate_path).unwrap();
+                 file.write_all(witness.as_bytes()).unwrap();
+             }
++            if let Some(dump_witness_path) = &self.opt.dump_witness {
++                let mut file: File = File::create(dump_witness_path).unwrap();
++                file.write_all(witness.as_bytes()).unwrap();
++            }
+             if !self.opt.certify {
+                 return;
+             }
+diff --git a/src/frontend/aig/mod.rs b/src/frontend/aig/mod.rs
+index 6ccc213..22e6625 100644
+--- a/src/frontend/aig/mod.rs
++++ b/src/frontend/aig/mod.rs
+@@ -71,6 +71,9 @@ impl Transys {
+                 init.insert(lv, i);
+             }
+         }
++        if aig.bads.is_empty() {
++            panic!("Error: No bad properties found in AIG file");
++        }
+         let bad = aig.bads[0].to_lit();
+         let rel = aig.cnf(compact);
+         let mut rst = GHashMap::new();
+@@ -143,16 +146,31 @@ impl AigFrontend {
+             }
+             aig.compress_property();
+         }
+-        let origin_ts = Transys::from_aig(&origin_aig, false);
++        if opt.verbose > 1 {
++            println!("Debug: aig.bads.len() = {}", aig.bads.len());
++        }
++        let origin_ts = Transys::from_aig(&aig, false);
+         Self {
+-            origin_aig,
++            origin_aig: origin_aig,
+             origin_ts,
+             opt: opt.clone(),
+         }
+     }
+ 
+     pub fn ts(&mut self) -> Transys {
+-        let (aig, rst) = aig_preprocess(&self.origin_aig, &self.opt);
++        let mut aig_to_process = self.origin_aig.clone();
++        if aig_to_process.bads.len() > 1 {
++            aig_to_process.compress_property();
++        }
++        let (aig, rst) = aig_preprocess(&aig_to_process, &self.opt);
++
++        if aig.bads.is_empty() && !aig_to_process.bads.is_empty() {
++            if self.opt.verbose > 0 {
++                println!("Warning: AIG preprocessing removed the property. Using un-preprocessed model to avoid panic.");
++            }
++            return Transys::from_aig(&aig_to_process, true);
++        }
++
+         let mut ts = Transys::from_aig(&aig, true);
+         ts.rst = rst;
+         ts
+diff --git a/src/options.rs b/src/options.rs
+index 709c0ff..0329c1e 100644
+--- a/src/options.rs
++++ b/src/options.rs
+@@ -31,6 +31,10 @@ pub struct Options {
+     #[arg(long, default_value_t = false)]
+     pub witness: bool,
+ 
++    /// dump witness to file when model is unsafe
++    #[arg(long)]
++    pub dump_witness: Option<PathBuf>,
++
+     #[command(flatten)]
+     pub ic3: IC3Options,

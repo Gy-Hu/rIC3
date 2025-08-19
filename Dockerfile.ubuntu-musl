@@ -1,0 +1,38 @@
+FROM --platform=linux/amd64 ubuntu:22.04 AS builder
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    cmake \
+    git \
+    musl-tools \
+    musl-dev \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Add musl target
+RUN rustup target add x86_64-unknown-linux-musl
+
+# Set environment variables for static linking
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+ENV CC_x86_64_unknown_linux_musl=musl-gcc
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+ENV OPENSSL_STATIC=1
+ENV OPENSSL_VENDOR=1
+
+WORKDIR /app
+COPY . .
+
+# Build the project
+RUN cargo build --target x86_64-unknown-linux-musl --release
+
+# Final stage - minimal image
+FROM --platform=linux/amd64 scratch
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/rIC3 /rIC3
+ENTRYPOINT ["/rIC3"]
