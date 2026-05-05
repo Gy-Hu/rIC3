@@ -174,19 +174,24 @@ impl IC3 {
             }
         }
         
-        if self.options.verbose > 0 {
-            println!("Loaded {} clauses from {} (filtered/skipped {} from total {})", 
-                     loaded_count, filepath, skipped_count, num_clauses);
-            if loaded_count > 0 {
-                println!("Added clauses will contribute to IC3 solving process");
-            } else {
-                println!("Warning: No clauses were loaded from {}. Possible reasons:", filepath);
-                println!("  - All clauses were filtered out based on criteria");
-                println!("  - The clauses referenced AIGER variables not found in model");
-                println!("  - The file format is incorrect");
-                println!("  - The file is empty");
-                println!("IC3 will proceed with standard verification without external clauses.");
-            }
+        // Always print summary so users can tell whether load actually worked.
+        println!(
+            "side-load {}: loaded {} / skipped {} / claimed {}",
+            filepath, loaded_count, skipped_count, num_clauses
+        );
+        if loaded_count == 0 {
+            println!(
+                "warning: no clauses loaded from {} — IC3 will solve from scratch. \
+                 possible causes: wrong model, bad format, all-vars-unknown, all-filtered.",
+                filepath
+            );
+        }
+        if self.options.verbose > 0 && loaded_count == 0 {
+            println!("Detailed possible reasons:");
+            println!("  - All clauses were filtered out based on criteria");
+            println!("  - The clauses referenced AIGER variables not found in model");
+            println!("  - The file format is incorrect");
+            println!("  - The file is empty");
         }
         
         Ok(loaded_count)

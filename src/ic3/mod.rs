@@ -413,19 +413,12 @@ impl Engine for IC3 {
             self.print_var_mapping();
         }
         
-        // Load clauses from file if a side-load file path is specified
+        // Load clauses from file if a side-load file path is specified.
+        // side_load_clauses prints the loaded/skipped summary itself.
         let load_inv_file = self.options.ic3_load_inv_file.clone();
         if !load_inv_file.is_empty() {
-            match self.side_load_clauses(&load_inv_file) {
-                Ok(count) => {
-                    if self.options.verbose == 0 && count > 0 {
-                        println!("Successfully loaded {} clauses from {}", count, load_inv_file);
-                    }
-                },
-                Err(e) => {
-                    // Output error messages even when verbose=0, as this is important feedback
-                    println!("Error loading clauses from {}: {}", load_inv_file, e);
-                }
+            if let Err(e) = self.side_load_clauses(&load_inv_file) {
+                println!("error: side-load {}: {}", load_inv_file, e);
             }
         }
         

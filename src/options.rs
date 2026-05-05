@@ -120,8 +120,8 @@ pub struct IC3Options {
     #[arg(long = "ic3-dump-inv", default_value_t = false)]
     pub dump_inv: bool,
     
-    /// maximum clause size for filtering when side loading
-    #[arg(long = "ic3-max-clause-size", default_value_t = 10)]
+    /// maximum clause size for filtering when side loading (default: no limit)
+    #[arg(long = "ic3-max-clause-size", default_value_t = usize::MAX)]
     pub max_clause_size: usize,
 
     /// enable CTI sampling - P /\ T /\ !P' pattern discovery
