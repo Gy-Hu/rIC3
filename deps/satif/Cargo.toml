@@ -1,0 +1,13 @@
+[package]
+name = "satif"
+version = "0.2.2"
+edition = "2021"
+license = "MIT"
+description = "SAT solver interface"
+repository = "https://github.com/gipsyh/satif"
+authors = ["Yuheng Su <gipsyh.icu@gmail.com>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+logic-form = { path = "../logic-form", version = "0.3.0" }

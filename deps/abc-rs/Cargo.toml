@@ -1,0 +1,16 @@
+[package]
+name = "abc-rs"
+version = "0.2.5"
+edition = "2024"
+license = "MIT"
+description = "ABC rust bindings"
+repository = "https://github.com/gipsyh/abc-rs"
+authors = ["Yuheng Su <gipsyh.icu@gmail.com>"]
+
+[dependencies]
+aig = { path = "../aig-rs", version = "0.3.0" }
+tempfile = "3.10.1"
+
+[build-dependencies]
+cmake = "0.1.50"
+giputils = { path = "../giputils", version = "0.3.0" }
