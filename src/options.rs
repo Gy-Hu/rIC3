@@ -31,9 +31,9 @@ pub struct Options {
     #[arg(long, default_value_t = false)]
     pub witness: bool,
     
-    /// Path where to dump inductive invariants (if verification is successful)
-    /// This option implicitly enables dumping without needing to specify --ic3-dump-inv
-    #[arg(long = "ic3-dump-inv-file", default_value = "inv.cnf")]
+    /// Path where to dump inductive invariants (if verification is successful).
+    /// Empty (default) = do not dump. Non-empty = dump to that path.
+    #[arg(long = "ic3-dump-inv-file", default_value = "")]
     pub ic3_dump_inv_file: String,
     
     /// Path to file containing clauses to load into IC3 (load before verification starts)

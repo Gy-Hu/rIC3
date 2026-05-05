@@ -49,36 +49,37 @@ impl IC3 {
         }
     }
     
-    // Handle export logic separately, not dependent on the certify option
+    // Handle export logic separately, not dependent on the certify option.
+    // Dump rules:
+    //   --ic3-dump-inv-file <PATH> non-empty  → dump to PATH
+    //   --ic3-dump-inv (flag) without path    → dump to "inv.cnf"
+    //   neither                                → no dump
     pub fn dump_invariants_if_needed(&mut self) {
-        // Export inductive invariants if the export option is set
-        if self.options.ic3.dump_inv || self.options.ic3_dump_inv_file != "inv.cnf" {
-            let invariants = self.frame.invariant();
-            self.dump_invariants(&invariants);
-        }
+        let path = if !self.options.ic3_dump_inv_file.is_empty() {
+            self.options.ic3_dump_inv_file.clone()
+        } else if self.options.ic3.dump_inv {
+            "inv.cnf".to_string()
+        } else {
+            return;
+        };
+        let invariants = self.frame.invariant();
+        self.dump_invariants(&invariants, &path);
     }
 
-    // Feature 1: Export inductive invariants to file
-    fn dump_invariants(&self, invariants: &[Lemma]) {
-        let mut file = File::create(&self.options.ic3_dump_inv_file).expect(&format!("Unable to create {}", self.options.ic3_dump_inv_file));
+    fn dump_invariants(&self, invariants: &[Lemma], path: &str) {
+        let mut file = File::create(path)
+            .unwrap_or_else(|e| panic!("Unable to create {}: {}", path, e));
         writeln!(&mut file, "{}", invariants.len()).expect("Failed to write to file");
         for clause in invariants.iter() {
             for lit in clause.cube().iter() {
-                // Convert to AIGER variable numbers (through restore mapping)
                 let aiger_lit = self.ts.restore(*lit);
-                
-                // In AIGER format, variable numbers are index*2, negative literals are odd
                 let aiger_var_id = (aiger_lit.var().0 * 2) as i32;
                 let aiger_lit_id = if aiger_lit.polarity() { aiger_var_id } else { -aiger_var_id };
-                
                 write!(&mut file, "{} ", aiger_lit_id).expect("Failed to write to file");
             }
-            writeln!(&mut file,"").expect("Failed to write to file");
+            writeln!(&mut file).expect("Failed to write to file");
         }
-        
-        if self.options.verbose > 0 {
-            println!("Inductive invariants dumped to {} in AIGER variable numbering format", self.options.ic3_dump_inv_file);
-        }
+        println!("Inductive invariants dumped to {} ({} cubes)", path, invariants.len());
     }
 
     // Feature 2: Side-load clauses from file (with filtering)
