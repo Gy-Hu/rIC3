@@ -213,23 +213,31 @@ impl IC3 {
             }
         }
         
-        // 3. Check if the clause is compatible with the current state
+        // 3. Necessary conditions for cube `c` to be a valid invariant fragment:
+        //      (a) init ∧ ¬bad ∧ c            UNSAT  (c doesn't subsume init)
+        //      (b) init ∧ T ∧ ¬bad ∧ ¬bad' ∧ c'  UNSAT  (c not 1-step reachable from safe init)
+        //    Both are weaker than full inductiveness but cheap and order-independent.
         let mut solver = Solver::new();
         self.ts.load_trans(&mut solver, true);
-        
-        // Add known constraints
-        for lemma in self.frame.invariant() {
-            solver.add_clause(&lemma.deref());
+
+        let mut assump_a: LitVec = self.ts.init.iter().copied().collect();
+        assump_a.push(!self.ts.bad);
+        assump_a.extend_from_slice(lits);
+        if solver.solve(&assump_a) {
+            return false;
         }
-        
-        // Check if the current clause conflicts with known constraints
-        let negated_lits: LitVec = lits.iter().map(|l| !*l).collect();
-        solver.add_clause(&negated_lits);
-        if solver.solve(&[]) {
-            return true; // Clause is compatible with current constraints
-        } else {
-            return false; // Clause conflicts with current constraints
+
+        let next_cube = self.ts.lits_next(lits.iter());
+        let next_bad = self.ts.lits_next(std::iter::once(&self.ts.bad));
+        let mut assump_b: LitVec = self.ts.init.iter().copied().collect();
+        assump_b.push(!self.ts.bad);
+        assump_b.push(!next_bad[0]);
+        assump_b.extend_from_slice(&next_cube);
+        if solver.solve(&assump_b) {
+            return false;
         }
+
+        true
     }
 
     fn check_witness_with_constrain<S: Satif + ?Sized>(
